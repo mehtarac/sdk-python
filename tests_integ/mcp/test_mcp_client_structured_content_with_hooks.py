@@ -9,8 +9,7 @@ import json
 from mcp import StdioServerParameters, stdio_client
 
 from strands import Agent
-from strands.experimental.hooks import AfterToolInvocationEvent
-from strands.hooks import HookProvider, HookRegistry
+from strands.hooks import AfterToolCallEvent, HookProvider, HookRegistry
 from strands.tools.mcp.mcp_client import MCPClient
 
 
@@ -22,9 +21,9 @@ class StructuredContentHookProvider(HookProvider):
 
     def register_hooks(self, registry: HookRegistry) -> None:
         """Register callback for after tool invocation events."""
-        registry.add_callback(AfterToolInvocationEvent, self.on_after_tool_invocation)
+        registry.add_callback(AfterToolCallEvent, self.on_after_tool_invocation)
 
-    def on_after_tool_invocation(self, event: AfterToolInvocationEvent) -> None:
+    def on_after_tool_invocation(self, event: AfterToolCallEvent) -> None:
         """Capture structured content tool results."""
         if event.tool_use["name"] == "echo_with_structured_content":
             self.captured_result = event.result
