@@ -11,21 +11,21 @@ Features:
 - Tool execution integration
 """
 
-import abc
-import logging
-from typing import AsyncIterable, Union
 
+import logging
+from typing import AsyncIterable, Union,Protocol
+
+from ....types.tools import ToolResult
 from ..types.bidirectional_streaming import (
     AudioInputEvent,
     BidirectionalStreamEvent,
     ImageInputEvent,
-    ToolResultInputEvent,
 )
 
 logger = logging.getLogger(__name__)
 
 
-class BidirectionalModelSession(abc.ABC):
+class BidirectionalModelSession(Protocol):
     """Abstract interface for model-specific bidirectional communication connections.
 
     Defines the contract for managing persistent streaming connections with individual
@@ -33,8 +33,8 @@ class BidirectionalModelSession(abc.ABC):
     tool execution results.
     """
 
-    @abc.abstractmethod
-    async def receive_events(self) -> AsyncIterable[BidirectionalStreamEvent]:
+
+    async def receive(self) -> AsyncIterable[BidirectionalStreamEvent]:
         """Receive events from the model in standardized format.
 
         Converts provider-specific events to a common format that can be
@@ -42,16 +42,17 @@ class BidirectionalModelSession(abc.ABC):
         """
         raise NotImplementedError
 
-    @abc.abstractmethod
-    async def send_events(self, content: Union[str, ImageInputEvent, AudioInputEvent, ToolResultInputEvent]) -> None:
+
+    async def send(self, content: Union[str, ImageInputEvent, AudioInputEvent, ToolResult]) -> None:
         """Send structured content (text, images,audio tool results) to the model.
 
         Args:
-            content: Text string, ImageInputEvent, AudioInputEvent or ToolResultInputEvent
+            content: Text string, ImageInputEvent, AudioInputEvent or ToolResult
         """
         raise NotImplementedError
 
-    @abc.abstractmethod
+
+    # TODO: discuss if we need this or not?
     async def send_interrupt(self) -> None:
         """Send interruption signal to stop generation immediately.
 
@@ -60,7 +61,6 @@ class BidirectionalModelSession(abc.ABC):
         """
         raise NotImplementedError
 
-    @abc.abstractmethod
     async def close(self) -> None:
         """Close the connection and cleanup resources."""
         raise NotImplementedError

@@ -141,18 +141,6 @@ class BidirectionalConnectionEndEvent(TypedDict):
     metadata: Optional[Dict[str, Any]]
 
 
-class ToolResultInputEvent(TypedDict):
-    """Tool result input event for sending tool execution results.
-
-    Attributes:
-        tool_use_id: Identifier for the tool use being responded to.
-        result: Tool execution result data.
-    """
-
-    tool_use_id: str
-    result: Dict[str, Any]
-
-
 class UsageMetricsEvent(TypedDict):
     """Token usage and performance tracking.
 
