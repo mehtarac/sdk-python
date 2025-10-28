@@ -91,7 +91,6 @@ class BidirectionalAgentLoop:
         tool_name = tool_use.get("name")
         tool_id = tool_use.get("toolUseId")
 
-        # Thread-safe counter increment
         current_tool_number = self.tool_count + 1
         self.tool_count = current_tool_number
         print(f"\nTool #{current_tool_number}: {tool_name}")
