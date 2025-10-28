@@ -41,8 +41,8 @@ class BidirectionalAgentLoop:
         self.interruption_lock = asyncio.Lock()
         self.conversation_lock = asyncio.Lock()
 
-        # Audio and metrics
-        self.audio_output_queue = asyncio.Queue()
+        # Output queue and metrics
+        self.event_output_queue = asyncio.Queue()
         self.tool_count = 0
 
         logger.debug("BidirectionalAgentLoop initialized")
@@ -136,11 +136,11 @@ class BidirectionalAgentLoop:
             else:
                 logger.debug("No active tools - full interruption handling")
 
-            # Clear audio output queue
+            # Clear output queue
             cleared_count = 0
             while True:
                 try:
-                    self.audio_output_queue.get_nowait()
+                    self.event_output_queue.get_nowait()
                     cleared_count += 1
                 except asyncio.QueueEmpty:
                     break
@@ -198,7 +198,7 @@ class BidirectionalAgentLoop:
 
                 # Route audio to both queues
                 if strands_event.get("audioOutput"):
-                    await self.audio_output_queue.put(strands_event)
+                    await self.event_output_queue.put(strands_event)
                     await self.agent._output_queue.put(strands_event)
                     continue
 
