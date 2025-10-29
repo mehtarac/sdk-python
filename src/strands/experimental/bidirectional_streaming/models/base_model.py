@@ -1,45 +1,45 @@
-""" " Abstract interface for bidirectional streaming models."""
+"""Unified bidirectional streaming interface.
 
-import abc
-from typing import Any
+Single layer combining model and session abstractions for simpler implementation.
+"""
+
+from typing import AsyncIterable, Protocol, Union
 
 from ....types.content import Messages
-from ....types.tools import ToolSpec
-from .base_session import BidirectionalModelSession
+from ....types.tools import ToolResult, ToolSpec
+from ..types.bidirectional_streaming import (
+    AudioInputEvent,
+    BidirectionalStreamEvent,
+    ImageInputEvent,
+    TextInputEvent,
+)
 
 
-class BidirectionalModel(abc.ABC):
-    """Abstract interface for bidirectional streaming models.
+class BaseModel(Protocol):
+    """Unified interface for bidirectional streaming models.
 
-    Manages configuration and creates stateful sessions.
+    Combines model configuration and session communication in a single abstraction.
+    Providers implement this directly without separate model/session classes.
     """
 
-    @abc.abstractmethod
-    def get_config(self) -> dict[str, Any]:
-        """Get current configuration."""
-        pass
+    async def connect(
+            self,
+            system_prompt: str | None = None,
+            tools: list[ToolSpec] | None = None,
+            messages: Messages | None = None,
+            **kwargs,
+    ) -> None:
+        """Establish bidirectional connection with the model."""
+        ...
 
-    @abc.abstractmethod
-    def update_config(self, **model_config: Any) -> None:
-        """Update model configuration."""
-        pass
+    async def close(self) -> None:
+        """Close connection and cleanup resources."""
+        ...
 
-    @abc.abstractmethod
-    def _format_tools_for_provider(self, tool_specs: list[ToolSpec]) -> Any:
-        """Format tools for provider-specific API."""
-        raise NotImplementedError
+    async def receive(self) -> AsyncIterable[BidirectionalStreamEvent]:
+        """Receive events from the model in standardized format."""
+        ...
 
-    @abc.abstractmethod
-    async def create_bidirectional_connection(
-        self,
-        system_prompt: str | None = None,
-        tools: list[ToolSpec] | None = None,
-        messages: Messages | None = None,
-        **kwargs,
-    ) -> BidirectionalModelSession:
-        """Create a new stateful bidirectional session.
-
-        Model (this) manages configuration and client.
-        Session (returned) manages connection state and communication.
-        """
-        raise NotImplementedError
+    async def send(self, content: Union[TextInputEvent, ImageInputEvent, AudioInputEvent, ToolResult]) -> None:
+        """Send structured content to the model."""
+        ...

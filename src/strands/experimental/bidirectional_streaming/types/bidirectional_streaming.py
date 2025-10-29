@@ -70,6 +70,15 @@ class AudioInputEvent(TypedDict):
     sampleRate: Literal[16000, 24000, 48000]
     channels: Literal[1, 2]
 
+class TextInputEvent(TypedDict):
+    """Text input event for sending text to the model.
+
+    Attributes:
+        text: The text content to send to the model.
+    """
+
+    text: str
+    role: Role
 
 class TextOutputEvent(TypedDict):
     """Text output event from the model during bidirectional streaming.
@@ -139,18 +148,6 @@ class BidirectionalConnectionEndEvent(TypedDict):
     reason: Literal["user_request", "timeout", "error", "connection_complete"]
     connectionId: Optional[str]
     metadata: Optional[Dict[str, Any]]
-
-
-class ToolResultInputEvent(TypedDict):
-    """Tool result input event for sending tool execution results.
-
-    Attributes:
-        tool_use_id: Identifier for the tool use being responded to.
-        result: Tool execution result data.
-    """
-
-    tool_use_id: str
-    result: Dict[str, Any]
 
 
 class UsageMetricsEvent(TypedDict):
