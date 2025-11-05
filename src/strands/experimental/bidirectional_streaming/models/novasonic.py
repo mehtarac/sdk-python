@@ -35,9 +35,8 @@ from ..types.bidirectional_streaming import (
     BidirectionalConnectionStartEvent,
     InterruptionDetectedEvent,
     TextOutputEvent,
-    UsageMetricsEvent
+    UsageMetricsEvent,
 )
-
 from .bidirectional_model import BidirectionalModel, BidirectionalModelSession
 
 logger = logging.getLogger(__name__)

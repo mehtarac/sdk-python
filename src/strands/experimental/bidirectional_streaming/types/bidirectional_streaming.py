@@ -120,6 +120,7 @@ class BidirectionalConnectionEndEvent(TypedDict):
     connectionId: Optional[str]
     metadata: Optional[Dict[str, Any]]
 
+
 class UsageMetricsEvent(TypedDict):
     """Token usage and performance tracking.
 
@@ -162,4 +163,3 @@ class BidirectionalStreamEvent(StreamEvent, total=False):
     BidirectionalConnectionStart: Optional[BidirectionalConnectionStartEvent]
     BidirectionalConnectionEnd: Optional[BidirectionalConnectionEndEvent]
     usageMetrics: Optional[UsageMetricsEvent]
-
