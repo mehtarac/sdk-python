@@ -11,11 +11,11 @@ from ....tools._validator import validate_and_prepare_tools
 from ....types._events import ToolResultEvent, ToolStreamEvent
 from ....types.content import Message
 from ....types.tools import ToolResult, ToolUse
-from ..models.bidirectional_model import BidirectionalModelSession
+from ..models.bidirectional_model import BidirectionalModel
 
 if TYPE_CHECKING:
     from ..agent import BidirectionalAgent
-
+    
 logger = logging.getLogger(__name__)
 
 
@@ -26,9 +26,14 @@ class BidirectionalAgentLoop:
     Tool execution uses asyncio.create_task() for concurrent execution.
     """
 
-    def __init__(self, model_session: BidirectionalModelSession, agent: "BidirectionalAgent"):
-        """Initialize agent loop with model session and agent dependencies."""
-        self.model_session = model_session
+    def __init__(self, model: BidirectionalModel, agent: "BidirectionalAgent") -> None:
+        """Initialize connection with model and agent reference.
+
+        Args:
+            model: Bidirectional model instance.
+            agent: BidirectionalAgent instance for tool registry access.
+        """
+        self.model = model
         self.agent = agent
         self.active = True
 
