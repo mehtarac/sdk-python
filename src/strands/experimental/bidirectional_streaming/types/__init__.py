@@ -1,7 +1,6 @@
 """Type definitions for bidirectional streaming."""
 
 from .agent import BidiAgentInput
-from .io import BidiIO
 from .events import (
     DEFAULT_CHANNELS,
     DEFAULT_FORMAT,
@@ -17,14 +16,15 @@ from .events import (
     BidiImageInputEvent,
     BidiInputEvent,
     BidiInterruptionEvent,
-    ModalityUsage,
-    BidiUsageEvent,
     BidiOutputEvent,
     BidiResponseCompleteEvent,
     BidiResponseStartEvent,
     BidiTextInputEvent,
     BidiTranscriptStreamEvent,
+    BidiUsageEvent,
+    ModalityUsage,
 )
+from .io import BidiIO
 
 __all__ = [
     "BidiIO",

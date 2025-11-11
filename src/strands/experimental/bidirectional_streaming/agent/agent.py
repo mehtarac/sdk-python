@@ -18,6 +18,7 @@ import logging
 from typing import Any, AsyncIterable, Callable
 
 from .... import _identifier
+from ....experimental.tools import ToolProvider
 from ....telemetry.metrics import EventLoopMetrics
 from ....tools.caller import _ToolCaller
 from ....tools.executors import ConcurrentToolExecutor
@@ -25,8 +26,7 @@ from ....tools.executors._executor import ToolExecutor
 from ....tools.registry import ToolRegistry
 from ....tools.watcher import ToolWatcher
 from ....types.content import Message, Messages
-from ....types.tools import ToolResult, ToolUse, AgentTool
-
+from ....types.tools import AgentTool, ToolResult, ToolUse
 from ..event_loop.bidirectional_event_loop import (
     BidirectionalConnection,
     start_bidirectional_connection,
@@ -34,10 +34,9 @@ from ..event_loop.bidirectional_event_loop import (
 )
 from ..models.bidirectional_model import BidiModel
 from ..models.novasonic import BidiNovaSonicModel
-from ..types.agent import BidiAgentInput
-from ..types.events import BidiAudioInputEvent, BidiImageInputEvent, BidiTextInputEvent, BidiInputEvent, BidiOutputEvent
 from ..types import BidiIO
-from ....experimental.tools import ToolProvider
+from ..types.agent import BidiAgentInput
+from ..types.events import BidiAudioInputEvent, BidiImageInputEvent, BidiInputEvent, BidiOutputEvent, BidiTextInputEvent
 
 logger = logging.getLogger(__name__)
 
@@ -54,8 +53,8 @@ class BidiAgent:
 
     def __init__(
         self,
-        model: BidiModel| str | None = None,
-        tools: list[str| AgentTool| ToolProvider]| None = None,
+        model: BidiModel | str | None = None,
+        tools: list[str | AgentTool | ToolProvider] | None = None,
         system_prompt: str | None = None,
         messages: Messages | None = None,
         record_direct_tool_call: bool = True,
@@ -257,21 +256,21 @@ class BidiAgent:
 
     async def send(self, input_data: BidiAgentInput) -> None:
         """Send input to the model (text, audio, image, or event dict).
-        
+
         Unified method for sending text, audio, and image input to the model during
         an active conversation session. Accepts TypedEvent instances or plain dicts
         (e.g., from WebSocket clients) which are automatically reconstructed.
-        
+
         Args:
             input_data: Can be:
                 - str: Text message from user
                 - BidiAudioInputEvent: Audio data with format/sample rate
                 - BidiImageInputEvent: Image data with MIME type
                 - dict: Event dictionary (will be reconstructed to TypedEvent)
-            
+
         Raises:
             ValueError: If no active session or invalid input type.
-            
+
         Example:
             await agent.send("Hello")
             await agent.send(BidiAudioInputEvent(audio="base64...", format="pcm", ...))
@@ -291,13 +290,13 @@ class BidiAgent:
             text_event = BidiTextInputEvent(text=input_data, role="user")
             await self._agent_loop.model.send(text_event)
             return
-        
+
         # Handle BidiInputEvent instances
         # Check this before dict since TypedEvent inherits from dict
         if isinstance(input_data, BidiInputEvent):
             await self._agent_loop.model.send(input_data)
             return
-        
+
         # Handle plain dict - reconstruct TypedEvent for WebSocket integration
         if isinstance(input_data, dict) and "type" in input_data:
             event_type = input_data["type"]
@@ -308,23 +307,22 @@ class BidiAgent:
                     audio=input_data["audio"],
                     format=input_data["format"],
                     sample_rate=input_data["sample_rate"],
-                    channels=input_data["channels"]
+                    channels=input_data["channels"],
                 )
             elif event_type == "bidi_image_input":
-                input_event = BidiImageInputEvent(
-                    image=input_data["image"],
-                    mime_type=input_data["mime_type"]
-                )
+                input_event = BidiImageInputEvent(image=input_data["image"], mime_type=input_data["mime_type"])
             else:
                 raise ValueError(f"Unknown event type: {event_type}")
-            
+
             # Send the reconstructed TypedEvent
             await self._agent_loop.model.send(input_event)
             return
-        
+
         # If we get here, input type is invalid
         raise ValueError(
-            f"Input must be a string, BidiInputEvent (BidiTextInputEvent/BidiAudioInputEvent/BidiImageInputEvent), or event dict with 'type' field, got: {type(input_data)}"
+            f"Input must be a string, BidiInputEvent "
+            f"(BidiTextInputEvent/BidiAudioInputEvent/BidiImageInputEvent), "
+            f"or event dict with 'type' field, got: {type(input_data)}"
         )
 
     async def receive(self) -> AsyncIterable[BidiOutputEvent]:
@@ -384,19 +382,19 @@ class BidiAgent:
         """
         try:
             logger.debug("Exiting async context manager - cleaning up adapters and connection")
-            
+
             # Cleanup adapters if any are currently active
             for adapter in self._current_adapters:
                 if hasattr(adapter, "cleanup"):
                     try:
                         adapter.stop()
-                        logger.debug(f"Cleaned up adapter: {type(adapter).__name__}")
+                        logger.debug("adapter=<%s> | cleaned up adapter", type(adapter).__name__)
                     except Exception as adapter_error:
-                        logger.warning(f"Error cleaning up adapter: {adapter_error}")
-            
+                        logger.warning("error=<%s> | error cleaning up adapter", adapter_error)
+
             # Clear current adapters
             self._current_adapters = []
-            
+
             # Cleanup agent connection
             await self.stop()
 
@@ -427,7 +425,7 @@ class BidiAgent:
             io_channels: List containing either BidiIO instances or (sender, receiver) tuples.
                 - BidiIO: IO channel instance with send(), receive(), and end() methods
                 - tuple: (sender_callable, receiver_callable) for custom transport
-                
+
         Example:
             ```python
             # With IO channel
@@ -444,12 +442,14 @@ class BidiAgent:
             Exception: Any exception from the transport layer.
         """
         if not io_channels:
-            raise ValueError("io_channels parameter cannot be empty. Provide either an IO channel or (sender, receiver) tuple.")
-        
+            raise ValueError(
+                "io_channels parameter cannot be empty. Provide either an IO channel or (sender, receiver) tuple."
+            )
+
         transport = io_channels[0]
-        
+
         # Set IO channel tracking for cleanup
-        if hasattr(transport, 'send') and hasattr(transport, 'receive'):
+        if hasattr(transport, "send") and hasattr(transport, "receive"):
             self._current_adapters = [transport]  # IO channel needs cleanup
         elif isinstance(transport, tuple) and len(transport) == 2:
             self._current_adapters = []  # Tuple needs no cleanup
@@ -472,7 +472,7 @@ class BidiAgent:
         async def receive_from_agent():
             """Receive events from agent and send to transport."""
             async for event in self.receive():
-                if hasattr(transport, 'receive'):
+                if hasattr(transport, "receive"):
                     await transport.receive(event)
                 else:
                     await transport[0](event)
@@ -480,7 +480,7 @@ class BidiAgent:
         async def send_to_agent():
             """Receive events from transport and send to agent."""
             while self.active:
-                if hasattr(transport, 'send'):
+                if hasattr(transport, "send"):
                     event = await transport.send()
                 else:
                     event = await transport[1]()

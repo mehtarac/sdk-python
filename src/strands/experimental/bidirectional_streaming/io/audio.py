@@ -7,6 +7,7 @@ Handles all PyAudio setup, streaming, and cleanup while keeping the core agent d
 import asyncio
 import base64
 import logging
+
 import pyaudio
 
 from ..types.io import BidiIO
@@ -33,9 +34,6 @@ class AudioIO(BidiIO):
                 - input_channels (int): Input channels (default: 1)
                 - output_channels (int): Output channels (default: 1)
         """
-        if pyaudio is None:
-            raise ImportError("PyAudio is required for AudioIO. Install with: pip install pyaudio")
-
         # Default audio configuration
         default_config = {
             "input_sample_rate": 24000,
@@ -99,8 +97,8 @@ class AudioIO(BidiIO):
             self.output_stream.start_stream()
 
         except Exception as e:
-            logger.error(f"AudioIO: Audio setup failed: {e}")
-            self._cleanup_audio()
+            logger.error("error=<%s> | audio setup failed", e)
+            self.stop()
             raise
 
     async def send(self) -> dict:
@@ -117,7 +115,7 @@ class AudioIO(BidiIO):
                 "channels": self.input_channels,
             }
         except Exception as e:
-            logger.warning(f"Audio input error: {e}")
+            logger.warning("error=<%s> | audio input error", e)
             return {
                 "audioData": b"",
                 "format": "pcm",
@@ -150,7 +148,7 @@ class AudioIO(BidiIO):
                         self.output_stream.write(chunk, exception_on_underflow=False)
                         await asyncio.sleep(0)
                     except Exception as e:
-                        logger.warning(f"Audio playback error: {e}")
+                        logger.warning("error=<%s> | audio playback error", e)
                         break
 
         elif "interruptionDetected" in event or "interrupted" in event:
@@ -163,7 +161,7 @@ class AudioIO(BidiIO):
                     self.output_stream.stop_stream()
                     self.output_stream.start_stream()
                 except Exception as e:
-                    logger.debug(f"Error clearing audio buffer: {e}")
+                    logger.debug("error=<%s> | error clearing audio buffer", e)
 
             self.interrupted = False
 
@@ -197,4 +195,4 @@ class AudioIO(BidiIO):
             self.audio = None
 
         except Exception as e:
-            logger.warning(f"Audio cleanup error: {e}")
+            logger.warning("error=<%s> | audio cleanup error", e)

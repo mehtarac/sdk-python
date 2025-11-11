@@ -132,7 +132,7 @@ async def receive(agent, context):
         async for event in agent.receive():
             # Get event type
             event_type = event.get("type", "unknown")
-            
+
             # Handle audio stream events (bidirectional_audio_stream)
             if event_type == "bidirectional_audio_stream":
                 if not context.get("interrupted", False):
@@ -149,13 +149,13 @@ async def receive(agent, context):
             elif event_type == "bidirectional_transcript_stream":
                 text_content = event.get("text", "")
                 role = event.get("role", "unknown")
-                
+
                 # Log transcript output
                 if role == "user":
                     print(f"User: {text_content}")
                 elif role == "assistant":
                     print(f"Assistant: {text_content}")
-            
+
             # Handle turn complete events (bidirectional_turn_complete)
             elif event_type == "bidirectional_turn_complete":
                 # Reset interrupted state since the turn is complete
@@ -173,14 +173,9 @@ async def send(agent, context):
                 audio_bytes = context["audio_in"].get_nowait()
                 # Create audio event using TypedEvent
                 from strands.experimental.bidirectional_streaming.types.events import BidiAudioInputEvent
-                
-                audio_b64 = base64.b64encode(audio_bytes).decode('utf-8')
-                audio_event = BidiAudioInputEvent(
-                    audio=audio_b64,
-                    format="pcm",
-                    sample_rate=16000,
-                    channels=1
-                )
+
+                audio_b64 = base64.b64encode(audio_bytes).decode("utf-8")
+                audio_event = BidiAudioInputEvent(audio=audio_b64, format="pcm", sample_rate=16000, channels=1)
                 await agent.send(audio_event)
             except asyncio.QueueEmpty:
                 await asyncio.sleep(0.01)  # Restored to working timing

@@ -10,11 +10,13 @@ from ..types.tools import ToolResult, ToolUse
 
 
 class _ToolCaller:
-    """Provides common tool calling functionality that can be used by both traditional
+    """Provides common tool calling functionality for Agent and BidirectionalAgent classes.
+
+    Provides common tool calling functionality that can be used by both traditional
     Agent and BidirectionalAgent classes with agent-specific customizations.
 
-        Automatically detects agent type and applies appropriate behavior:
-        - Traditional agents: Uses conversation_manager.apply_management()
+    Automatically detects agent type and applies appropriate behavior:
+    - Traditional agents: Uses conversation_manager.apply_management()
     """
 
     def __init__(self, agent: Any) -> None:
@@ -99,7 +101,7 @@ class _ToolCaller:
 
         # Handle underscore placeholder for characters that can't be python identifiers
         if "_" in name:
-            filtered_tools = [
+            filtered_tools: list[str] = [
                 tool_name for (tool_name, tool) in tool_registry.items() if tool_name.replace("-", "_") == name
             ]
 

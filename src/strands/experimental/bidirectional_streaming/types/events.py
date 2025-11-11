@@ -19,7 +19,7 @@ Audio format normalization:
 - Audio data stored as base64-encoded strings for JSON compatibility
 """
 
-from typing import Any, Dict, List, Literal, Optional, Union, cast
+from typing import Any, Dict, List, Literal, Optional, cast
 
 from ....types._events import ModelStreamEvent, TypedEvent
 from ....types.streaming import ContentBlockDelta
@@ -49,6 +49,12 @@ class BidiTextInputEvent(TypedEvent):
     """
 
     def __init__(self, text: str, role: str):
+        """Initialize text input event.
+
+        Args:
+            text: The text content to send to the model.
+            role: The role of the message sender (typically "user").
+        """
         super().__init__(
             {
                 "type": "bidi_text_input",
@@ -59,10 +65,12 @@ class BidiTextInputEvent(TypedEvent):
 
     @property
     def text(self) -> str:
+        """Get the text content."""
         return cast(str, self.get("text"))
 
     @property
     def role(self) -> str:
+        """Get the role."""
         return cast(str, self.get("role"))
 
 
@@ -85,6 +93,14 @@ class BidiAudioInputEvent(TypedEvent):
         sample_rate: Literal[16000, 24000, 48000],
         channels: Literal[1, 2],
     ):
+        """Initialize audio input event.
+
+        Args:
+            audio: Base64-encoded audio string to send to model.
+            format: Audio format from SUPPORTED_AUDIO_FORMATS.
+            sample_rate: Sample rate from SUPPORTED_SAMPLE_RATES.
+            channels: Channel count from SUPPORTED_CHANNELS.
+        """
         super().__init__(
             {
                 "type": "bidi_audio_input",
@@ -97,18 +113,22 @@ class BidiAudioInputEvent(TypedEvent):
 
     @property
     def audio(self) -> str:
+        """Get the audio data."""
         return cast(str, self.get("audio"))
 
     @property
     def format(self) -> str:
+        """Get the audio format."""
         return cast(str, self.get("format"))
 
     @property
     def sample_rate(self) -> int:
+        """Get the sample rate."""
         return cast(int, self.get("sample_rate"))
 
     @property
     def channels(self) -> int:
+        """Get the channel count."""
         return cast(int, self.get("channels"))
 
 
@@ -127,6 +147,12 @@ class BidiImageInputEvent(TypedEvent):
         image: str,
         mime_type: str,
     ):
+        """Initialize image input event.
+
+        Args:
+            image: Base64-encoded image string.
+            mime_type: MIME type (e.g., "image/jpeg", "image/png").
+        """
         super().__init__(
             {
                 "type": "bidi_image_input",
@@ -137,10 +163,12 @@ class BidiImageInputEvent(TypedEvent):
 
     @property
     def image(self) -> str:
+        """Get the image data."""
         return cast(str, self.get("image"))
 
     @property
     def mime_type(self) -> str:
+        """Get the MIME type."""
         return cast(str, self.get("mime_type"))
 
 
@@ -158,6 +186,12 @@ class BidiConnectionStartEvent(TypedEvent):
     """
 
     def __init__(self, connection_id: str, model: str):
+        """Initialize connection start event.
+
+        Args:
+            connection_id: Unique identifier for this streaming connection.
+            model: Model identifier (e.g., "gpt-realtime", "gemini-2.0-flash-live").
+        """
         super().__init__(
             {
                 "type": "bidi_connection_start",
@@ -168,10 +202,12 @@ class BidiConnectionStartEvent(TypedEvent):
 
     @property
     def connection_id(self) -> str:
+        """Get the connection ID."""
         return cast(str, self.get("connection_id"))
 
     @property
     def model(self) -> str:
+        """Get the model identifier."""
         return cast(str, self.get("model"))
 
 
@@ -183,10 +219,16 @@ class BidiResponseStartEvent(TypedEvent):
     """
 
     def __init__(self, response_id: str):
+        """Initialize response start event.
+
+        Args:
+            response_id: Unique identifier for this response (used in response.complete).
+        """
         super().__init__({"type": "bidi_response_start", "response_id": response_id})
 
     @property
     def response_id(self) -> str:
+        """Get the response ID."""
         return cast(str, self.get("response_id"))
 
 
@@ -207,6 +249,14 @@ class BidiAudioStreamEvent(TypedEvent):
         sample_rate: Literal[16000, 24000, 48000],
         channels: Literal[1, 2],
     ):
+        """Initialize audio stream event.
+
+        Args:
+            audio: Base64-encoded audio string.
+            format: Audio encoding format.
+            sample_rate: Number of audio samples per second in Hz.
+            channels: Number of audio channels (1=mono, 2=stereo).
+        """
         super().__init__(
             {
                 "type": "bidi_audio_stream",
@@ -219,24 +269,28 @@ class BidiAudioStreamEvent(TypedEvent):
 
     @property
     def audio(self) -> str:
+        """Get the audio data."""
         return cast(str, self.get("audio"))
 
     @property
     def format(self) -> str:
+        """Get the audio format."""
         return cast(str, self.get("format"))
 
     @property
     def sample_rate(self) -> int:
+        """Get the sample rate."""
         return cast(int, self.get("sample_rate"))
 
     @property
     def channels(self) -> int:
+        """Get the channel count."""
         return cast(int, self.get("channels"))
 
 
 class BidiTranscriptStreamEvent(ModelStreamEvent):
     """Audio transcription streaming (user or assistant speech).
-    
+
     Supports incremental transcript updates for providers that send partial
     transcripts before the final version.
 
@@ -256,6 +310,15 @@ class BidiTranscriptStreamEvent(ModelStreamEvent):
         is_final: bool,
         current_transcript: Optional[str] = None,
     ):
+        """Initialize transcript stream event.
+
+        Args:
+            delta: The incremental transcript change (ContentBlockDelta).
+            text: The delta text (same as delta content for convenience).
+            role: Who is speaking ("user" or "assistant").
+            is_final: Whether this is the final/complete transcript.
+            current_transcript: The accumulated transcript text so far (None for first delta).
+        """
         super().__init__(
             {
                 "type": "bidi_transcript_stream",
@@ -269,22 +332,27 @@ class BidiTranscriptStreamEvent(ModelStreamEvent):
 
     @property
     def delta(self) -> ContentBlockDelta:
+        """Get the delta content."""
         return cast(ContentBlockDelta, self.get("delta"))
 
     @property
     def text(self) -> str:
+        """Get the text content."""
         return cast(str, self.get("text"))
 
     @property
     def role(self) -> str:
+        """Get the role."""
         return cast(str, self.get("role"))
 
     @property
     def is_final(self) -> bool:
+        """Check if this is the final transcript."""
         return cast(bool, self.get("is_final"))
 
     @property
     def current_transcript(self) -> Optional[str]:
+        """Get the current accumulated transcript."""
         return cast(Optional[str], self.get("current_transcript"))
 
 
@@ -297,6 +365,11 @@ class BidiInterruptionEvent(TypedEvent):
     """
 
     def __init__(self, reason: Literal["user_speech", "error"]):
+        """Initialize interruption event.
+
+        Args:
+            reason: Why the interruption occurred.
+        """
         super().__init__(
             {
                 "type": "bidi_interruption",
@@ -306,6 +379,7 @@ class BidiInterruptionEvent(TypedEvent):
 
     @property
     def reason(self) -> str:
+        """Get the interruption reason."""
         return cast(str, self.get("reason"))
 
 
@@ -322,6 +396,12 @@ class BidiResponseCompleteEvent(TypedEvent):
         response_id: str,
         stop_reason: Literal["complete", "interrupted", "tool_use", "error"],
     ):
+        """Initialize response complete event.
+
+        Args:
+            response_id: ID of the response that completed (matches response.start).
+            stop_reason: Why the response ended.
+        """
         super().__init__(
             {
                 "type": "bidi_response_complete",
@@ -332,10 +412,12 @@ class BidiResponseCompleteEvent(TypedEvent):
 
     @property
     def response_id(self) -> str:
+        """Get the response ID."""
         return cast(str, self.get("response_id"))
 
     @property
     def stop_reason(self) -> str:
+        """Get the stop reason."""
         return cast(str, self.get("stop_reason"))
 
 
@@ -377,6 +459,16 @@ class BidiUsageEvent(TypedEvent):
         cache_read_input_tokens: Optional[int] = None,
         cache_write_input_tokens: Optional[int] = None,
     ):
+        """Initialize usage event.
+
+        Args:
+            input_tokens: Total tokens used for all input modalities.
+            output_tokens: Total tokens used for all output modalities.
+            total_tokens: Sum of input and output tokens.
+            modality_details: Optional list of token usage per modality.
+            cache_read_input_tokens: Optional tokens read from cache.
+            cache_write_input_tokens: Optional tokens written to cache.
+        """
         data: Dict[str, Any] = {
             "type": "bidi_usage",
             "inputTokens": input_tokens,
@@ -393,26 +485,32 @@ class BidiUsageEvent(TypedEvent):
 
     @property
     def input_tokens(self) -> int:
+        """Get the input token count."""
         return cast(int, self.get("inputTokens"))
 
     @property
     def output_tokens(self) -> int:
+        """Get the output token count."""
         return cast(int, self.get("outputTokens"))
 
     @property
     def total_tokens(self) -> int:
+        """Get the total token count."""
         return cast(int, self.get("totalTokens"))
 
     @property
     def modality_details(self) -> List[ModalityUsage]:
+        """Get the modality details."""
         return cast(List[ModalityUsage], self.get("modality_details", []))
 
     @property
     def cache_read_input_tokens(self) -> Optional[int]:
+        """Get the cache read input token count."""
         return cast(Optional[int], self.get("cacheReadInputTokens"))
 
     @property
     def cache_write_input_tokens(self) -> Optional[int]:
+        """Get the cache write input token count."""
         return cast(Optional[int], self.get("cacheWriteInputTokens"))
 
 
@@ -429,6 +527,12 @@ class BidiConnectionCloseEvent(TypedEvent):
         connection_id: str,
         reason: Literal["client_disconnect", "timeout", "error", "complete"],
     ):
+        """Initialize connection close event.
+
+        Args:
+            connection_id: Unique identifier for this streaming connection (matches BidiConnectionStartEvent).
+            reason: Why the connection was closed.
+        """
         super().__init__(
             {
                 "type": "bidi_connection_close",
@@ -439,10 +543,12 @@ class BidiConnectionCloseEvent(TypedEvent):
 
     @property
     def connection_id(self) -> str:
+        """Get the connection ID."""
         return cast(str, self.get("connection_id"))
 
     @property
     def reason(self) -> str:
+        """Get the close reason."""
         return cast(str, self.get("reason"))
 
 
@@ -463,6 +569,12 @@ class BidiErrorEvent(TypedEvent):
         error: Exception,
         details: Optional[Dict[str, Any]] = None,
     ):
+        """Initialize error event.
+
+        Args:
+            error: The exception that occurred.
+            details: Optional additional error information.
+        """
         # Store serializable data in dict (for JSON serialization)
         super().__init__(
             {
@@ -478,7 +590,7 @@ class BidiErrorEvent(TypedEvent):
     @property
     def error(self) -> Exception:
         """The original exception that occurred.
-        
+
         Can be used for re-raising or type-based error handling.
         """
         return self._error
