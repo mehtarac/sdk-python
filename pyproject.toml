@@ -57,7 +57,7 @@ sagemaker = [
 bidirectional-streaming-nova = [
     "pyaudio>=0.2.13",
     "rx>=3.2.0",
-    "smithy-aws-core>=0.0.1",
+    "smithy-aws-core>=0.0.1"; python_version>='3.12'"
     "pytz",
     "aws_sdk_bedrock_runtime; python_version>='3.12'",
 ]
@@ -74,7 +74,7 @@ bidirectional-streaming-gemini = [
 bidirectional-streaming = [
     "pyaudio>=0.2.13",
     "rx>=3.2.0",
-    "smithy-aws-core>=0.0.1",
+    "smithy-aws-core>=0.0.1; python_version>='3.12'",
     "pytz",
     "aws_sdk_bedrock_runtime; python_version>='3.12'",
     "websockets>=14.0,<16.0",
