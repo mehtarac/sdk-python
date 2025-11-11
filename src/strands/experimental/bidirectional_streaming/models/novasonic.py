@@ -16,11 +16,13 @@ import asyncio
 import base64
 import json
 import logging
+import os
 import time
 import traceback
 import uuid
-from typing import AsyncIterable, Union
+from typing import AsyncIterable, Optional, Union
 
+import boto3
 from aws_sdk_bedrock_runtime.client import BedrockRuntimeClient, InvokeModelWithBidirectionalStreamOperationInput
 from aws_sdk_bedrock_runtime.config import Config, HTTPAuthSchemeResolver, SigV4AuthScheme
 from aws_sdk_bedrock_runtime.models import (
@@ -96,6 +98,7 @@ class BidiNovaSonicModel(BidiModel):
         self,
         model_id: str = "amazon.nova-sonic-v1:0",
         region: str = "us-east-1",
+        boto_session: Optional[boto3.Session] = None,
         **kwargs
     ) -> None:
         """Initialize Nova Sonic bidirectional model.
@@ -103,11 +106,14 @@ class BidiNovaSonicModel(BidiModel):
         Args:
             model_id: Nova Sonic model identifier.
             region: AWS region.
+            boto_session: Optional boto3 session for credential resolution.
+                If not provided, will use default session with automatic credential discovery.
             **kwargs: Reserved for future parameters.
         """
         # Model configuration
         self.model_id = model_id
         self.region = region
+        self.boto_session = boto_session
         self.client = None
 
         # Connection state (initialized in start())
@@ -748,18 +754,37 @@ class BidiNovaSonicModel(BidiModel):
             raise
 
     async def _initialize_client(self) -> None:
-        """Initialize Nova Sonic client."""
+        """Initialize Nova Sonic client with flexible credential resolution."""
         try:
+            # Use boto3 session for flexible credential resolution
+            session = self.boto_session or boto3.Session()
+            
+            # Resolve region from session or environment variables
+            resolved_region = self.region or session.region_name or os.environ.get("AWS_REGION") or "us-east-1"
+            self.region = resolved_region
+            
+            # Get credentials from session 
+            credentials = session.get_credentials()
+            
+            if not credentials:
+                raise ValueError("No AWS credentials found. Configure AWS credentials via AWS CLI, environment variables, IAM role, or provide boto_session parameter.")
+            
+            # Set environment variables from session credentials
+            os.environ['AWS_ACCESS_KEY_ID'] = credentials.access_key
+            os.environ['AWS_SECRET_ACCESS_KEY'] = credentials.secret_key
+            if credentials.token:
+                os.environ['AWS_SESSION_TOKEN'] = credentials.token
+                        
             config = Config(
-                endpoint_uri=f"https://bedrock-runtime.{self.region}.amazonaws.com",
-                region=self.region,
+                endpoint_uri=f"https://bedrock-runtime.{resolved_region}.amazonaws.com",
+                region=resolved_region,
                 aws_credentials_identity_resolver=EnvironmentCredentialsResolver(),
                 auth_scheme_resolver=HTTPAuthSchemeResolver(),
                 auth_schemes={"aws.auth#sigv4": SigV4AuthScheme(service="bedrock")},
             )
 
             self.client = BedrockRuntimeClient(config=config)
-            logger.debug("Nova Sonic client initialized")
+            logger.debug("Nova Sonic client initialized with credentials (region: %s)", resolved_region)
 
         except ImportError as e:
             logger.error("Nova Sonic dependencies not available: %s", e)
