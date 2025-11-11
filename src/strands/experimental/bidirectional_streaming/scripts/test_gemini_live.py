@@ -28,6 +28,7 @@ import time
 try:
     import cv2
     import PIL.Image
+
     CAMERA_AVAILABLE = True
 except ImportError as e:
     print(f"Camera dependencies not available: {e}")
@@ -106,18 +107,18 @@ async def play(context):
 async def record(context):
     """Record audio input from microphone."""
     audio = pyaudio.PyAudio()
-    
+
     # List all available audio devices
     print("Available audio devices:")
     for i in range(audio.get_device_count()):
         device_info = audio.get_device_info_by_index(i)
-        if device_info['maxInputChannels'] > 0:  # Only show input devices
+        if device_info["maxInputChannels"] > 0:  # Only show input devices
             print(f"  Device {i}: {device_info['name']} (inputs: {device_info['maxInputChannels']})")
-    
+
     # Get default input device info
     default_device = audio.get_default_input_device_info()
     print(f"\nUsing default input device: {default_device['name']} (Device {default_device['index']})")
-    
+
     microphone = audio.open(
         channels=1,
         format=pyaudio.paInt16,
@@ -205,7 +206,7 @@ def _get_frame(cap):
     """Capture and process a frame from camera."""
     if not CAMERA_AVAILABLE:
         return None
-        
+
     # Read the frame
     ret, frame = cap.read()
     # Check if the frame was read successfully
@@ -232,11 +233,11 @@ async def get_frames(context):
     if not CAMERA_AVAILABLE:
         print("Camera not available - skipping video capture")
         return
-        
+
     # This takes about a second, and will block the whole program
     # causing the audio pipeline to overflow if you don't to_thread it.
     cap = await asyncio.to_thread(cv2.VideoCapture, 0)  # 0 represents the default camera
-    
+
     print("Camera initialized. Starting video capture...")
 
     try:
@@ -248,15 +249,15 @@ async def get_frames(context):
             # Send frame to agent as image input
             try:
                 from strands.experimental.bidirectional_streaming.types.events import BidiImageInputEvent
-                
+
                 image_event = BidiImageInputEvent(
                     image=frame["data"],  # Already base64 encoded
-                    mime_type=frame["mime_type"]
+                    mime_type=frame["mime_type"],
                 )
                 await context["agent"].send(image_event)
                 print("📸 Frame sent to model")
             except Exception as e:
-                logger.error(f"Error sending frame: {e}")
+                logger.error("error=<%s> | error sending frame", e)
 
             # Wait 1 second between frames (1 FPS)
             await asyncio.sleep(1.0)
@@ -276,14 +277,9 @@ async def send(agent, context):
                 audio_bytes = context["audio_in"].get_nowait()
                 # Create audio event using TypedEvent
                 from strands.experimental.bidirectional_streaming.types.events import BidiAudioInputEvent
-                
-                audio_b64 = base64.b64encode(audio_bytes).decode('utf-8')
-                audio_event = BidiAudioInputEvent(
-                    audio=audio_b64,
-                    format="pcm",
-                    sample_rate=16000,
-                    channels=1
-                )
+
+                audio_b64 = base64.b64encode(audio_bytes).decode("utf-8")
+                audio_event = BidiAudioInputEvent(audio=audio_b64, format="pcm", sample_rate=16000, channels=1)
                 await agent.send(audio_event)
             except asyncio.QueueEmpty:
                 await asyncio.sleep(0.01)
@@ -303,12 +299,12 @@ async def main(duration=180):
 
     # Get API key from environment variable
     api_key = os.getenv("GOOGLE_AI_API_KEY")
-    
+
     if not api_key:
         print("ERROR: GOOGLE_AI_API_KEY environment variable not set")
         print("Please set it with: export GOOGLE_AI_API_KEY=your_api_key")
         return
-    
+
     # Initialize Gemini Live model with proper configuration
     logger.info("Initializing Gemini Live model with API key")
     
@@ -342,12 +338,12 @@ async def main(duration=180):
     try:
         # Run all tasks concurrently including camera
         await asyncio.gather(
-            play(context), 
-            record(context), 
-            receive(agent, context), 
+            play(context),
+            record(context),
+            receive(agent, context),
             send(agent, context),
             get_frames(context),  # Add camera task
-            return_exceptions=True
+            return_exceptions=True,
         )
     except KeyboardInterrupt:
         print("\nInterrupted by user")

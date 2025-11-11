@@ -21,7 +21,7 @@ from strands.experimental.bidirectional_streaming.models.openai import BidiOpenA
 async def play(context):
     """Handle audio playback with interruption support."""
     audio = pyaudio.PyAudio()
-    
+
     try:
         speaker = audio.open(
             format=pyaudio.paInt16,
@@ -30,7 +30,7 @@ async def play(context):
             output=True,
             frames_per_buffer=1024,
         )
-        
+
         while context["active"]:
             try:
                 # Check for interruption
@@ -41,32 +41,32 @@ async def play(context):
                             context["audio_out"].get_nowait()
                         except asyncio.QueueEmpty:
                             break
-                    
+
                     context["interrupted"] = False
                     await asyncio.sleep(0.05)
                     continue
-                
+
                 # Get audio data with timeout
                 try:
                     audio_data = await asyncio.wait_for(context["audio_out"].get(), timeout=0.1)
-                    
+
                     if audio_data and context["active"]:
                         # Play in chunks to allow interruption
                         chunk_size = 1024
                         for i in range(0, len(audio_data), chunk_size):
                             if context.get("interrupted", False) or not context["active"]:
                                 break
-                            
-                            chunk = audio_data[i:i + chunk_size]
+
+                            chunk = audio_data[i : i + chunk_size]
                             speaker.write(chunk)
                             await asyncio.sleep(0.001)  # Brief pause for responsiveness
-                
+
                 except asyncio.TimeoutError:
                     continue
-                    
+
             except asyncio.CancelledError:
                 break
-        
+
     except asyncio.CancelledError:
         pass
     except Exception as e:
@@ -74,7 +74,7 @@ async def play(context):
     finally:
         try:
             speaker.close()
-        except:
+        except Exception:
             pass
         audio.terminate()
 
@@ -82,7 +82,7 @@ async def play(context):
 async def record(context):
     """Handle microphone recording."""
     audio = pyaudio.PyAudio()
-    
+
     try:
         microphone = audio.open(
             format=pyaudio.paInt16,
@@ -91,7 +91,7 @@ async def record(context):
             input=True,
             frames_per_buffer=1024,
         )
-        
+
         while context["active"]:
             try:
                 audio_bytes = microphone.read(1024, exception_on_overflow=False)
@@ -99,7 +99,7 @@ async def record(context):
                 await asyncio.sleep(0.01)
             except asyncio.CancelledError:
                 break
-        
+
     except asyncio.CancelledError:
         pass
     except Exception as e:
@@ -107,7 +107,7 @@ async def record(context):
     finally:
         try:
             microphone.close()
-        except:
+        except Exception:
             pass
         audio.terminate()
 
@@ -118,7 +118,7 @@ async def receive(agent, context):
         async for event in agent.receive():
             if not context["active"]:
                 break
-            
+
             # Get event type
             event_type = event.get("type", "unknown")
             
@@ -127,7 +127,7 @@ async def receive(agent, context):
                 # Decode base64 audio string to bytes for playback
                 audio_b64 = event["audio"]
                 audio_data = base64.b64decode(audio_b64)
-                
+
                 if not context.get("interrupted", False):
                     await context["audio_out"].put(audio_data)
             
@@ -135,7 +135,7 @@ async def receive(agent, context):
             elif event_type == "bidi_transcript_stream":
                 source = event.get("role", "assistant")
                 text = event.get("text", "").strip()
-                
+
                 if text:
                     if source == "user":
                         print(f"🎤 User: {text}")
@@ -195,26 +195,21 @@ async def send(agent, context):
         while context["active"]:
             try:
                 audio_bytes = await asyncio.wait_for(context["audio_in"].get(), timeout=0.1)
-                
+
                 # Create audio event using TypedEvent
                 # Encode audio bytes to base64 string for JSON serializability
                 from strands.experimental.bidirectional_streaming.types.events import BidiAudioInputEvent
-                
-                audio_b64 = base64.b64encode(audio_bytes).decode('utf-8')
-                audio_event = BidiAudioInputEvent(
-                    audio=audio_b64,
-                    format="pcm",
-                    sample_rate=24000,
-                    channels=1
-                )
-                
+
+                audio_b64 = base64.b64encode(audio_bytes).decode("utf-8")
+                audio_event = BidiAudioInputEvent(audio=audio_b64, format="pcm", sample_rate=24000, channels=1)
+
                 await agent.send(audio_event)
-                
+
             except asyncio.TimeoutError:
                 continue
             except asyncio.CancelledError:
                 break
-    
+
     except asyncio.CancelledError:
         pass
     except Exception as e:
@@ -226,13 +221,13 @@ async def send(agent, context):
 async def main():
     """Main test function for OpenAI voice chat."""
     print("Starting OpenAI Realtime API test...")
-    
+
     # Check API key
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
         print("OPENAI_API_KEY environment variable not set")
         return False
-    
+
     # Check audio system
     try:
         audio = pyaudio.PyAudio()
@@ -240,7 +235,7 @@ async def main():
     except Exception as e:
         print(f"Audio system error: {e}")
         return False
-    
+
     # Create OpenAI model
     model = BidiOpenAIRealtimeModel(
         model="gpt-4o-realtime-preview",
@@ -250,67 +245,60 @@ async def main():
             "audio": {
                 "input": {
                     "format": {"type": "audio/pcm", "rate": 24000},
-                    "turn_detection": {
-                        "type": "server_vad",
-                        "threshold": 0.5,
-                        "silence_duration_ms": 700
-                    }
+                    "turn_detection": {"type": "server_vad", "threshold": 0.5, "silence_duration_ms": 700},
                 },
-                "output": {
-                    "format": {"type": "audio/pcm", "rate": 24000},
-                    "voice": "alloy"
-                }
-            }
-        }
+                "output": {"format": {"type": "audio/pcm", "rate": 24000}, "voice": "alloy"},
+            },
+        },
     )
-    
+
     # Create agent
     agent = BidiAgent(
         model=model,
         tools=[calculator],
-        system_prompt="You are a helpful voice assistant. Keep your responses brief and natural. Say hello when you first connect."
+        system_prompt=(
+            "You are a helpful voice assistant. Keep your responses brief and natural. "
+            "Say hello when you first connect."
+        ),
     )
-    
+
     # Start the session
     await agent.start()
-    
+
     # Create shared context
     context = {
         "active": True,
         "audio_in": asyncio.Queue(),
         "audio_out": asyncio.Queue(),
         "interrupted": False,
-        "start_time": time.time()
+        "start_time": time.time(),
     }
-    
+
     print("Speak into your microphone. Press Ctrl+C to stop.")
-    
+
     try:
         # Run all tasks concurrently
         await asyncio.gather(
-            play(context),
-            record(context),
-            receive(agent, context),
-            send(agent, context),
-            return_exceptions=True
+            play(context), record(context), receive(agent, context), send(agent, context), return_exceptions=True
         )
-        
+
     except KeyboardInterrupt:
         print("\nInterrupted by user")
+        return True
     except asyncio.CancelledError:
         print("\nTest cancelled")
+        return True
     except Exception as e:
         print(f"\nError during voice chat: {e}")
+        return False
     finally:
         print("Cleaning up...")
         context["active"] = False
-        
+
         try:
             await agent.stop()
         except Exception as e:
             print(f"Cleanup error: {e}")
-        
-        return True
 
 
 if __name__ == "__main__":
@@ -321,4 +309,5 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"Test error: {e}")
         import traceback
+
         traceback.print_exc()

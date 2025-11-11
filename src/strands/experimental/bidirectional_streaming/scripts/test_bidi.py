@@ -11,11 +11,8 @@ from strands.experimental.bidirectional_streaming.models.novasonic import BidiNo
 from strands.experimental.bidirectional_streaming.io.audio import AudioIO
 from strands_tools import calculator
 
-
 async def main():
     """Test the BidirectionalAgent API."""
-
-    
     # Nova Sonic model
     adapter = AudioIO()
     model = BidiNovaSonicModel(region="us-east-1")
@@ -34,4 +31,5 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"❌ Error: {e}")
         import traceback
+
         traceback.print_exc()

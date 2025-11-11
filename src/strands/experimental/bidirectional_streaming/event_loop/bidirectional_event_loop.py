@@ -15,13 +15,17 @@ import asyncio
 import logging
 import traceback
 import uuid
+from typing import TYPE_CHECKING
 
-from ....tools._validator import validate_and_prepare_tools
 from ....telemetry.metrics import Trace
+from ....tools._validator import validate_and_prepare_tools
 from ....types._events import ToolResultEvent, ToolStreamEvent
 from ....types.content import Message
 from ....types.tools import ToolResult, ToolUse
 from ..models.bidirectional_model import BidiModel
+
+if TYPE_CHECKING:
+    from ..agent.agent import BidiAgent
 
 logger = logging.getLogger(__name__)
 
@@ -59,7 +63,7 @@ class BidirectionalConnection:
         # Interruption handling (model-agnostic)
         self.interrupted = False
         self.interruption_lock = asyncio.Lock()
-        
+
         # Tool execution tracking
         self.tool_count = 0
 
@@ -266,12 +270,12 @@ async def _process_model_events(session: BidirectionalConnection) -> None:
             # Basic validation - skip invalid events
             if not isinstance(provider_event, dict):
                 continue
-            
+
             strands_event = provider_event
 
             # Get event type
             event_type = strands_event.get("type", "")
-            
+
             # Handle interruption detection
             if event_type == "bidi_interruption":
                 logger.debug("Interruption forwarded")
@@ -315,7 +319,7 @@ async def _process_tool_execution(session: BidirectionalConnection) -> None:
     """Execute tools concurrently with interruption support.
 
     Background task that manages tool execution without blocking model event
-    processing or user interaction. Uses proper asyncio cancellation for 
+    processing or user interaction. Uses proper asyncio cancellation for
     interruption handling rather than manual state checks.
 
     Args:
@@ -327,10 +331,10 @@ async def _process_tool_execution(session: BidirectionalConnection) -> None:
             tool_use = await asyncio.wait_for(session.tool_queue.get(), timeout=TOOL_QUEUE_TIMEOUT)
             tool_name = tool_use.get("name")
             tool_id = tool_use.get("toolUseId")
-            
+
             session.tool_count += 1
             print(f"\nTool #{session.tool_count}: {tool_name}")
-            
+
             logger.debug("Tool execution started: %s (id: %s)", tool_name, tool_id)
 
             task_id = str(uuid.uuid4())
@@ -376,42 +380,39 @@ async def _process_tool_execution(session: BidirectionalConnection) -> None:
     logger.debug("Tool execution processor stopped")
 
 
-
-
-
 async def _execute_tool_with_strands(session: BidirectionalConnection, tool_use: dict) -> None:
     """Execute tool using the complete Strands tool execution system.
-    
+
     Uses proper Strands ToolExecutor system with validation, error handling,
     and event streaming.
-    
+
     Args:
         session: BidirectionalConnection for context.
         tool_use: Tool use event to execute.
     """
     tool_name = tool_use.get("name")
     tool_id = tool_use.get("toolUseId")
-    
+
     logger.debug("Executing tool: %s (id: %s)", tool_name, tool_id)
-    
+
     try:
-        # Create message structure for validation 
+        # Create message structure for validation
         tool_message: Message = {"role": "assistant", "content": [{"toolUse": tool_use}]}
-        
+
         # Use Strands validation system
         tool_uses: list[ToolUse] = []
         tool_results: list[ToolResult] = []
         invalid_tool_use_ids: list[str] = []
-        
+
         validate_and_prepare_tools(tool_message, tool_uses, tool_results, invalid_tool_use_ids)
-        
+
         # Filter valid tools
         valid_tool_uses = [tu for tu in tool_uses if tu.get("toolUseId") not in invalid_tool_use_ids]
-        
+
         if not valid_tool_uses:
             logger.warning("No valid tools after validation: %s", tool_name)
             return
-        
+
         # Create invocation state for tool execution
         invocation_state = {
             "agent": session.agent,
@@ -419,72 +420,61 @@ async def _execute_tool_with_strands(session: BidirectionalConnection, tool_use:
             "messages": session.agent.messages,
             "system_prompt": session.agent.system_prompt,
         }
-        
+
         # Create cycle trace and span
         cycle_trace = Trace("Bidirectional Tool Execution")
         cycle_span = None
-        
+
         tool_events = session.agent.tool_executor._execute(
-            session.agent,
-            valid_tool_uses,
-            tool_results,
-            cycle_trace,
-            cycle_span,
-            invocation_state
+            session.agent, valid_tool_uses, tool_results, cycle_trace, cycle_span, invocation_state
         )
-        
+
         # Process tool events and send results to provider
         async for tool_event in tool_events:
             if isinstance(tool_event, ToolResultEvent):
                 tool_result = tool_event.tool_result
                 tool_use_id = tool_result.get("toolUseId")
-                
+
                 # Send ToolResultEvent through send() method to model
                 await session.model.send(tool_event)
                 logger.debug("Tool result sent to model: %s", tool_use_id)
-                
+
                 # Also forward ToolResultEvent to output queue for client visibility
                 await session.agent._output_queue.put(tool_event)
                 logger.debug("Tool result sent to client: %s", tool_use_id)
-                
+
             # Handle streaming events if needed later
             elif isinstance(tool_event, ToolStreamEvent):
                 logger.debug("Tool stream event: %s", tool_event)
                 # Forward tool stream events to output queue
                 await session.agent._output_queue.put(tool_event)
-        
+
         # Add tool result message to conversation history
         if tool_results:
             from ....hooks import MessageAddedEvent
-            
+
             tool_result_message: Message = {
                 "role": "user",
                 "content": [{"toolResult": result} for result in tool_results],
             }
-            
+
             session.agent.messages.append(tool_result_message)
             session.agent.hooks.invoke_callbacks(MessageAddedEvent(agent=session.agent, message=tool_result_message))
             logger.debug("Tool result message added to history: %s", tool_name)
-        
+
         logger.debug("Tool execution completed: %s", tool_name)
-        
+
     except asyncio.CancelledError:
         logger.debug("Tool execution cancelled: %s (id: %s)", tool_name, tool_id)
         raise
     except Exception as e:
         logger.error("Tool execution error: %s - %s", tool_name, str(e))
-        
+
         # Send error result wrapped in ToolResultEvent
-        error_result: ToolResult = {
-            "toolUseId": tool_id,
-            "status": "error",
-            "content": [{"text": f"Error: {str(e)}"}]
-        }
+        error_result: ToolResult = {"toolUseId": tool_id, "status": "error", "content": [{"text": f"Error: {str(e)}"}]}
         try:
             await session.model.send(ToolResultEvent(error_result))
             logger.debug("Error result sent: %s", tool_id)
         except Exception as send_error:
             logger.error("Failed to send error result: %s - %s", tool_id, str(send_error))
             raise  # Propagate exception since this is experimental code
-
-

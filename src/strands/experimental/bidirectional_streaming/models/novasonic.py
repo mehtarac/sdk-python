@@ -19,20 +19,19 @@ import logging
 import time
 import traceback
 import uuid
-from typing import AsyncIterable, Union
+from typing import Any, AsyncIterable, Literal, cast
 
 from aws_sdk_bedrock_runtime.client import BedrockRuntimeClient, InvokeModelWithBidirectionalStreamOperationInput
 from aws_sdk_bedrock_runtime.config import Config, HTTPAuthSchemeResolver, SigV4AuthScheme
 from aws_sdk_bedrock_runtime.models import (
     BidirectionalInputPayloadPart,
     InvokeModelWithBidirectionalStreamInputChunk,
-    InvokeModelWithBidirectionalStreamOperationOutput,
 )
 from smithy_aws_core.identity.environment import EnvironmentCredentialsResolver
 
+from ....types._events import ToolResultEvent, ToolUseStreamEvent
 from ....types.content import Messages
 from ....types.tools import ToolResult, ToolSpec, ToolUse
-from ....types._events import ToolResultEvent, ToolUseStreamEvent
 from ..types.events import (
     BidiAudioInputEvent,
     BidiAudioStreamEvent,
@@ -42,12 +41,12 @@ from ..types.events import (
     BidiImageInputEvent,
     BidiInputEvent,
     BidiInterruptionEvent,
-    BidiUsageEvent,
     BidiOutputEvent,
-    BidiTextInputEvent,
-    BidiTranscriptStreamEvent,
     BidiResponseCompleteEvent,
     BidiResponseStartEvent,
+    BidiTextInputEvent,
+    BidiTranscriptStreamEvent,
+    BidiUsageEvent,
 )
 from .bidirectional_model import BidiModel
 
@@ -92,12 +91,7 @@ class BidiNovaSonicModel(BidiModel):
     tool execution patterns while providing the standard BidiModel interface.
     """
 
-    def __init__(
-        self,
-        model_id: str = "amazon.nova-sonic-v1:0",
-        region: str = "us-east-1",
-        **kwargs
-    ) -> None:
+    def __init__(self, model_id: str = "amazon.nova-sonic-v1:0", region: str = "us-east-1", **kwargs: Any) -> None:
         """Initialize Nova Sonic bidirectional model.
 
         Args:
@@ -108,26 +102,26 @@ class BidiNovaSonicModel(BidiModel):
         # Model configuration
         self.model_id = model_id
         self.region = region
-        self.client = None
+        self.client: Any = None
 
         # Connection state (initialized in start())
-        self.stream = None
-        self.connection_id = None
+        self.stream: Any = None
+        self.connection_id: str | None = None
         self._active = False
 
         # Nova Sonic requires unique content names
-        self.audio_content_name = None
+        self.audio_content_name: str | None = None
 
         # Audio connection state
         self.audio_connection_active = False
-        self.last_audio_time = None
+        self.last_audio_time: float | None = None
         self.silence_threshold = SILENCE_THRESHOLD
-        self.silence_task = None
+        self.silence_task: Any = None
 
         # Background task and event queue
-        self._response_task = None
-        self._event_queue = None
-        
+        self._response_task: Any = None
+        self._event_queue: Any = None
+
         # Track API-provided identifiers
         self._current_completion_id = None
         self._current_role = None
@@ -139,7 +133,7 @@ class BidiNovaSonicModel(BidiModel):
         system_prompt: str | None = None,
         tools: list[ToolSpec] | None = None,
         messages: Messages | None = None,
-        **kwargs,
+        **kwargs: Any,
     ) -> None:
         """Establish bidirectional connection to Nova Sonic.
 
@@ -151,7 +145,7 @@ class BidiNovaSonicModel(BidiModel):
         """
         if self._active:
             raise RuntimeError("Connection already active. Close the existing connection before creating a new one.")
-        
+
         logger.debug("Nova connection create - starting")
 
         try:
@@ -255,7 +249,7 @@ class BidiNovaSonicModel(BidiModel):
         except json.JSONDecodeError as e:
             logger.warning("Nova Sonic JSON decode error: %s", e)
 
-    def _log_event_type(self, nova_event: dict[str, any]) -> None:
+    def _log_event_type(self, nova_event: dict[str, Any]) -> None:
         """Log specific Nova Sonic event types for debugging."""
         if "usageEvent" in nova_event:
             logger.debug("Nova usage: %s", nova_event["usageEvent"])
@@ -269,7 +263,7 @@ class BidiNovaSonicModel(BidiModel):
             audio_bytes = base64.b64decode(audio_content)
             logger.debug("Nova audio output: %d bytes", len(audio_bytes))
 
-    async def receive(self) -> AsyncIterable[dict[str, any]]:
+    async def receive(self) -> AsyncIterable[BidiOutputEvent]:  # type: ignore
         """Receive Nova Sonic events and convert to provider-agnostic format."""
         if not self.stream:
             logger.error("Stream is None")
@@ -278,10 +272,7 @@ class BidiNovaSonicModel(BidiModel):
         logger.debug("Nova events - starting event stream")
 
         # Emit connection start event
-        yield BidiConnectionStartEvent(
-            connection_id=self.connection_id,
-            model=self.model_id
-        )
+        yield BidiConnectionStartEvent(connection_id=self.connection_id or "unknown", model=self.model_id)
 
         try:
             while self._active:
@@ -304,7 +295,7 @@ class BidiNovaSonicModel(BidiModel):
             yield BidiErrorEvent(error=e)
         finally:
             # Emit connection close event
-            yield BidiConnectionCloseEvent(connection_id=self.connection_id, reason="complete")
+            yield BidiConnectionCloseEvent(connection_id=self.connection_id or "unknown", reason="complete")
 
     async def send(
         self,
@@ -332,10 +323,8 @@ class BidiNovaSonicModel(BidiModel):
                 tool_result = content.get("tool_result")
                 if tool_result:
                     await self._send_tool_result(tool_result)
-            else:
-                logger.warning(f"Unknown content type: {type(content)}")
         except Exception as e:
-            logger.error(f"Error sending content: {e}")
+            logger.error("error=<%s> | error sending content", e)
             raise  # Propagate exception for debugging in experimental code
 
     async def _start_audio_connection(self) -> None:
@@ -450,6 +439,9 @@ class BidiNovaSonicModel(BidiModel):
     async def _send_tool_result(self, tool_result: ToolResult) -> None:
         """Internal: Send tool result using Nova Sonic toolResult format."""
         tool_use_id = tool_result.get("toolUseId")
+        if not tool_use_id:
+            logger.warning("Tool result missing toolUseId")
+            return
 
         logger.debug("Nova tool result send: %s", tool_use_id)
 
@@ -513,7 +505,7 @@ class BidiNovaSonicModel(BidiModel):
         finally:
             logger.debug("Nova connection closed")
 
-    def _convert_nova_event(self, nova_event: dict[str, any]) -> BidiOutputEvent | None:
+    def _convert_nova_event(self, nova_event: dict[str, Any]) -> BidiOutputEvent | None:
         """Convert Nova Sonic events to TypedEvent format."""
         # Handle completion start - track completionId
         if "completionStart" in nova_event:
@@ -521,32 +513,27 @@ class BidiNovaSonicModel(BidiModel):
             self._current_completion_id = completion_data.get("completionId")
             logger.debug("Nova completion started: %s", self._current_completion_id)
             return None
-        
+
         # Handle completion end
         if "completionEnd" in nova_event:
             completion_data = nova_event["completionEnd"]
             completion_id = completion_data.get("completionId", self._current_completion_id)
             stop_reason = completion_data.get("stopReason", "END_TURN")
-            
+
             event = BidiResponseCompleteEvent(
                 response_id=completion_id or str(uuid.uuid4()),  # Fallback to UUID if missing
-                stop_reason="interrupted" if stop_reason == "INTERRUPTED" else "complete"
+                stop_reason="interrupted" if stop_reason == "INTERRUPTED" else "complete",
             )
-            
+
             # Clear completion tracking
             self._current_completion_id = None
             return event
-        
+
         # Handle audio output
         if "audioOutput" in nova_event:
             # Audio is already base64 string from Nova Sonic
             audio_content = nova_event["audioOutput"]["content"]
-            return BidiAudioStreamEvent(
-                audio=audio_content,
-                format="pcm",
-                sample_rate=24000,
-                channels=1
-            )
+            return BidiAudioStreamEvent(audio=audio_content, format="pcm", sample_rate=24000, channels=1)
 
         # Handle text output (transcripts)
         elif "textOutput" in nova_event:
@@ -559,12 +546,13 @@ class BidiNovaSonicModel(BidiModel):
                 logger.debug("Nova interruption detected in text")
                 return BidiInterruptionEvent(reason="user_speech")
 
+            role_str = role.lower() if isinstance(role, str) else "assistant"
             return BidiTranscriptStreamEvent(
                 delta={"text": text_content},
                 text=text_content,
-                role=role.lower() if isinstance(role, str) else "assistant",
+                role=cast(Literal["user", "assistant"], role_str),
                 is_final=True,
-                current_transcript=text_content
+                current_transcript=text_content,
             )
 
         # Handle tool use
@@ -577,8 +565,7 @@ class BidiNovaSonicModel(BidiModel):
             }
             # Return ToolUseStreamEvent for consistency with standard agent
             return ToolUseStreamEvent(
-                delta={"toolUse": tool_use_event},
-                current_tool_use=tool_use_event
+                delta={"toolUse": tool_use_event}, current_tool_use=cast(dict[str, Any], tool_use_event)
             )
 
         # Handle interruption
@@ -591,11 +578,11 @@ class BidiNovaSonicModel(BidiModel):
             usage_data = nova_event["usageEvent"]
             total_input = usage_data.get("totalInputTokens", 0)
             total_output = usage_data.get("totalOutputTokens", 0)
-            
+
             return BidiUsageEvent(
                 input_tokens=total_input,
                 output_tokens=total_output,
-                total_tokens=usage_data.get("totalTokens", total_input + total_output)
+                total_tokens=usage_data.get("totalTokens", total_input + total_output),
             )
 
         # Handle content start events (track role and emit response start)
@@ -604,7 +591,7 @@ class BidiNovaSonicModel(BidiModel):
             role = content_data.get("role", "unknown")
             # Store role for subsequent text output events
             self._current_role = role
-            
+
             # Emit response start event using API-provided completionId
             # completionId should already be tracked from completionStart event
             return BidiResponseStartEvent(
@@ -635,7 +622,7 @@ class BidiNovaSonicModel(BidiModel):
         if tools:
             tool_config = self._build_tool_configuration(tools)
             prompt_start_event["event"]["promptStart"]["toolUseOutputConfiguration"] = NOVA_TOOL_CONFIG
-            prompt_start_event["event"]["promptStart"]["toolConfiguration"] = {"tools": tool_config}
+            prompt_start_event["event"]["promptStart"]["toolConfiguration"] = {"tools": tool_config}  # type: ignore
 
         return json.dumps(prompt_start_event)
 
@@ -643,7 +630,7 @@ class BidiNovaSonicModel(BidiModel):
         """Build tool configuration from tool specs."""
         tool_config = []
         for tool in tools:
-            input_schema = (
+            input_schema: dict[str, Any] = (
                 {"json": json.dumps(tool["inputSchema"]["json"])}
                 if "json" in tool["inputSchema"]
                 else {"json": json.dumps(tool["inputSchema"])}
@@ -707,7 +694,7 @@ class BidiNovaSonicModel(BidiModel):
             {"event": {"textInput": {"promptName": self.connection_id, "contentName": content_name, "content": text}}}
         )
 
-    def _get_tool_result_event(self, content_name: str, result: dict[str, any]) -> str:
+    def _get_tool_result_event(self, content_name: str, result: dict[str, Any]) -> str:
         """Generate tool result event."""
         return json.dumps(
             {

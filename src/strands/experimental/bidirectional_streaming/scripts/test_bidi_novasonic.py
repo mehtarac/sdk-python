@@ -148,7 +148,7 @@ async def receive(agent, context):
             elif event_type == "bidi_transcript_stream":
                 text_content = event.get("text", "")
                 role = event.get("role", "unknown")
-                
+
                 # Log transcript output
                 if role == "user":
                     print(f"User: {text_content}")
@@ -191,14 +191,9 @@ async def send(agent, context):
                 audio_bytes = context["audio_in"].get_nowait()
                 # Create audio event using TypedEvent
                 from strands.experimental.bidirectional_streaming.types.events import BidiAudioInputEvent
-                
-                audio_b64 = base64.b64encode(audio_bytes).decode('utf-8')
-                audio_event = BidiAudioInputEvent(
-                    audio=audio_b64,
-                    format="pcm",
-                    sample_rate=16000,
-                    channels=1
-                )
+
+                audio_b64 = base64.b64encode(audio_bytes).decode("utf-8")
+                audio_event = BidiAudioInputEvent(audio=audio_b64, format="pcm", sample_rate=16000, channels=1)
                 await agent.send(audio_event)
             except asyncio.QueueEmpty:
                 await asyncio.sleep(0.01)  # Restored to working timing
