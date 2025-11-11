@@ -20,7 +20,7 @@ import os
 import time
 import traceback
 import uuid
-from typing import AsyncIterable, Optional, Union
+from typing import AsyncIterable
 
 import boto3
 from aws_sdk_bedrock_runtime.client import BedrockRuntimeClient, InvokeModelWithBidirectionalStreamOperationInput
@@ -98,7 +98,7 @@ class BidiNovaSonicModel(BidiModel):
         self,
         model_id: str = "amazon.nova-sonic-v1:0",
         region: str = "us-east-1",
-        boto_session: Optional[boto3.Session] = None,
+        boto_session: boto3.Session | None = None,
         **kwargs
     ) -> None:
         """Initialize Nova Sonic bidirectional model.
