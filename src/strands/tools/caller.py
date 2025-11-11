@@ -6,6 +6,7 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Callable, Optional
 
 from ..tools.executors._executor import ToolExecutor
+from ..types._events import ToolInterruptEvent
 from ..types.tools import ToolResult, ToolUse
 
 
@@ -61,7 +62,12 @@ class _ToolCaller:
 
             Raises:
                 AttributeError: If the tool doesn't exist.
+                RuntimeError: If trying to call tool during an interrupt.
             """
+            # Check if agent is in interrupt state
+            if hasattr(self._agent, '_interrupt_state') and self._agent._interrupt_state.activated:
+                raise RuntimeError("cannot directly call tool during interrupt")
+                
             normalized_name = self._find_normalized_tool_name(name)
 
             # Create unique tool ID and set up the tool request
@@ -125,7 +131,20 @@ class _ToolCaller:
 
         async def acall() -> ToolResult:
             async for event in ToolExecutor._stream(self._agent, tool_use, tool_results, invocation_state):
+                # Check for tool interrupt event
+                if isinstance(event, ToolInterruptEvent):
+                    # Deactivate interrupt state before raising error (matches reference implementation)
+                    if hasattr(self._agent, '_interrupt_state'):
+                        self._agent._interrupt_state.deactivate()
+                    raise RuntimeError("cannot raise interrupt in direct tool call")
                 _ = event
+            if not tool_results:
+                # Handle case where tool execution failed or was interrupted
+                return {
+                    "toolUseId": tool_use["toolUseId"],
+                    "status": "error",
+                    "content": [{"text": "Tool execution failed or was interrupted"}]
+                }
             return tool_results[0]
 
         def tcall() -> ToolResult:

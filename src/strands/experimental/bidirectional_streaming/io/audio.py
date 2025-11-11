@@ -59,10 +59,10 @@ class AudioIO(BidiIO):
         self.output_channels = default_config["output_channels"]
 
         # Audio infrastructure
-        self.audio = None
-        self.input_stream = None
-        self.output_stream = None
-        self.interrupted = False
+        self.audio: pyaudio.PyAudio | None = None
+        self.input_stream: pyaudio.Stream | None = None
+        self.output_stream: pyaudio.Stream | None = None
+        self.interrupted: bool = False
 
     def start(self) -> None:
         """Setup PyAudio streams for input and output."""
@@ -103,8 +103,11 @@ class AudioIO(BidiIO):
 
     async def send(self) -> dict:
         """Read audio from microphone."""
-        if not self.input_stream:
+        if self.input_stream is None:
             self.start()
+
+        if self.input_stream is None:
+            raise RuntimeError("Failed to initialize audio input stream")
 
         try:
             audio_bytes = self.input_stream.read(self.chunk_size, exception_on_overflow=False)
@@ -125,8 +128,11 @@ class AudioIO(BidiIO):
 
     async def receive(self, event: dict) -> None:
         """Handle audio events with direct stream writing."""
-        if not self.output_stream:
+        if self.output_stream is None:
             self.start()
+
+        if self.output_stream is None:
+            raise RuntimeError("Failed to initialize audio output stream")
 
         # Handle audio output
         if "audioOutput" in event and not self.interrupted:
@@ -141,7 +147,7 @@ class AudioIO(BidiIO):
                 for i in range(0, len(audio_data), chunk_size):
                     # Check for interruption before each chunk
                     if self.interrupted:
-                        break
+                        break  # type: ignore
 
                     chunk = audio_data[i : i + chunk_size]
                     try:

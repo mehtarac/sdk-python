@@ -9,7 +9,7 @@ import json
 import logging
 import os
 import uuid
-from typing import AsyncIterable
+from typing import Any, AsyncIterable, Literal, cast
 
 import websockets
 from websockets.exceptions import ConnectionClosed
@@ -32,6 +32,7 @@ from ..types.events import (
     BidiTextInputEvent,
     BidiTranscriptStreamEvent,
     BidiUsageEvent,
+    ModalityUsage,
 )
 from .bidirectional_model import BidiModel
 
@@ -76,8 +77,8 @@ class BidiOpenAIRealtimeModel(BidiModel):
         api_key: str | None = None,
         organization: str | None = None,
         project: str | None = None,
-        session_config: dict[str, any] | None = None,
-        **kwargs,
+        session_config: dict[str, Any] | None = None,
+        **kwargs: Any,
     ) -> None:
         """Initialize OpenAI Realtime bidirectional model.
 
@@ -104,13 +105,13 @@ class BidiOpenAIRealtimeModel(BidiModel):
                 )
 
         # Connection state (initialized in start())
-        self.websocket = None
-        self.connection_id = None
-        self._active = False
+        self.websocket: Any = None
+        self.connection_id: str | None = None
+        self._active: bool = False
 
-        self._event_queue = None
-        self._response_task = None
-        self._function_call_buffer = {}
+        self._event_queue: asyncio.Queue[dict[str, Any]] | None = None
+        self._response_task: asyncio.Task[None] | None = None
+        self._function_call_buffer: dict[str, dict[str, Any]] = {}
 
         logger.debug("OpenAI Realtime bidirectional model initialized: %s", model)
 
@@ -119,7 +120,7 @@ class BidiOpenAIRealtimeModel(BidiModel):
         system_prompt: str | None = None,
         tools: list[ToolSpec] | None = None,
         messages: Messages | None = None,
-        **kwargs,
+        **kwargs: Any,
     ) -> None:
         """Establish bidirectional connection to OpenAI Realtime API.
 
@@ -139,7 +140,6 @@ class BidiOpenAIRealtimeModel(BidiModel):
             self.connection_id = str(uuid.uuid4())
             self._active = True
             self._event_queue = asyncio.Queue()
-            self._function_call_buffer = {}
 
             # Establish WebSocket connection
             url = f"{OPENAI_REALTIME_URL}?model={self.model}"
@@ -190,7 +190,7 @@ class BidiOpenAIRealtimeModel(BidiModel):
         return BidiTranscriptStreamEvent(
             delta={"text": text},
             text=text,
-            role=normalized_role,
+            role=cast(Literal["user", "assistant"], normalized_role),
             is_final=is_final,
             current_transcript=text if is_final else None,
         )
@@ -205,7 +205,7 @@ class BidiOpenAIRealtimeModel(BidiModel):
 
     def _build_session_config(self, system_prompt: str | None, tools: list[ToolSpec] | None) -> dict:
         """Build session configuration for OpenAI Realtime API."""
-        config = DEFAULT_SESSION_CONFIG.copy()
+        config: dict[str, Any] = DEFAULT_SESSION_CONFIG.copy()
 
         if system_prompt:
             config["instructions"] = system_prompt
@@ -263,26 +263,31 @@ class BidiOpenAIRealtimeModel(BidiModel):
     async def _add_conversation_history(self, messages: Messages) -> None:
         """Add conversation history to the session."""
         for message in messages:
-            conversation_item = {
+            conversation_item: dict[str, Any] = {
                 "type": "conversation.item.create",
                 "item": {"type": "message", "role": message["role"], "content": []},
             }
 
             content = message.get("content", "")
+            content_list: list[dict[str, Any]] = conversation_item["item"]["content"]
             if isinstance(content, str):
-                conversation_item["item"]["content"].append({"type": "input_text", "text": content})
+                content_list.append({"type": "input_text", "text": content})
             elif isinstance(content, list):
                 for item in content:
                     if isinstance(item, dict) and item.get("type") == "text":
-                        conversation_item["item"]["content"].append(
-                            {"type": "input_text", "text": item.get("text", "")}
-                        )
+                        content_list.append({"type": "input_text", "text": item.get("text", "")})
 
             await self._send_event(conversation_item)
 
     async def _process_responses(self) -> None:
         """Process incoming WebSocket messages."""
         logger.debug("OpenAI Realtime response processor started")
+
+        if self.websocket is None:
+            raise RuntimeError("WebSocket connection not established")
+
+        if self._event_queue is None:
+            raise RuntimeError("Event queue not initialized")
 
         try:
             async for message in self.websocket:
@@ -304,8 +309,14 @@ class BidiOpenAIRealtimeModel(BidiModel):
             self._active = False
             logger.debug("OpenAI Realtime response processor stopped")
 
-    async def receive(self) -> AsyncIterable[BidiOutputEvent]:
+    async def receive(self) -> AsyncIterable[BidiOutputEvent]:  # type: ignore[override]
         """Receive OpenAI events and convert to Strands TypedEvent format."""
+        if self.connection_id is None:
+            raise RuntimeError("Connection not established - call start() first")
+
+        if self._event_queue is None:
+            raise RuntimeError("Event queue not initialized")
+
         # Emit connection start event
         yield BidiConnectionStartEvent(connection_id=self.connection_id, model=self.model)
 
@@ -325,7 +336,7 @@ class BidiOpenAIRealtimeModel(BidiModel):
             # Emit connection close event
             yield BidiConnectionCloseEvent(connection_id=self.connection_id, reason="complete")
 
-    def _convert_openai_event(self, openai_event: dict[str, any]) -> list[BidiOutputEvent] | None:
+    def _convert_openai_event(self, openai_event: dict[str, Any]) -> list[BidiOutputEvent] | None:
         """Convert OpenAI events to Strands TypedEvent format."""
         event_type = openai_event.get("type")
 
@@ -400,7 +411,9 @@ class BidiOpenAIRealtimeModel(BidiModel):
                     }
                     del self._function_call_buffer[call_id]
                     # Return ToolUseStreamEvent for consistency with standard agent
-                    return [ToolUseStreamEvent(delta={"toolUse": tool_use}, current_tool_use=tool_use)]
+                    return [
+                        ToolUseStreamEvent(delta={"toolUse": tool_use}, current_tool_use=cast(dict[str, Any], tool_use))
+                    ]
                 except (json.JSONDecodeError, KeyError) as e:
                     logger.warning("Error parsing function arguments for %s: %s", call_id, e)
                     del self._function_call_buffer[call_id]
@@ -437,12 +450,13 @@ class BidiOpenAIRealtimeModel(BidiModel):
             }
 
             # Build list of events to return
-            events = []
+            events: list[BidiOutputEvent] = []
 
             # Always add response complete event
-            events.append(
-                BidiResponseCompleteEvent(response_id=response_id, stop_reason=stop_reason_map.get(status, "complete"))
+            stop_reason = cast(
+                Literal["complete", "interrupted", "tool_use", "error"], stop_reason_map.get(status, "complete")
             )
+            events.append(BidiResponseCompleteEvent(response_id=response_id, stop_reason=stop_reason))
 
             # Add usage event if available
             if usage:
@@ -450,7 +464,7 @@ class BidiOpenAIRealtimeModel(BidiModel):
                 output_details = usage.get("output_token_details", {})
 
                 # Build modality details
-                modality_details = []
+                modality_details: list[dict[str, Any]] = []
 
                 # Text modality
                 text_input = input_details.get("text_tokens", 0)
@@ -482,7 +496,7 @@ class BidiOpenAIRealtimeModel(BidiModel):
                         input_tokens=usage.get("input_tokens", 0),
                         output_tokens=usage.get("output_tokens", 0),
                         total_tokens=usage.get("total_tokens", 0),
-                        modality_details=modality_details if modality_details else None,
+                        modality_details=cast(list[ModalityUsage], modality_details) if modality_details else None,
                         cache_read_input_tokens=cached_tokens if cached_tokens > 0 else None,
                     )
                 )
@@ -573,8 +587,6 @@ class BidiOpenAIRealtimeModel(BidiModel):
                 tool_result = content.get("tool_result")
                 if tool_result:
                     await self._send_tool_result(tool_result)
-            else:
-                logger.warning("content_type=<%s> | unknown content type", type(content).__name__)
         except Exception as e:
             logger.error("error=<%s> | error sending content", e)
             raise  # Propagate exception for debugging in experimental code
@@ -601,7 +613,7 @@ class BidiOpenAIRealtimeModel(BidiModel):
         logger.debug("OpenAI tool result send: %s", tool_use_id)
 
         # Extract result content
-        result_data = {}
+        result_data: dict[str, Any] | str = {}
         if "content" in tool_result:
             # Extract text from content blocks
             for block in tool_result["content"]:
@@ -630,15 +642,19 @@ class BidiOpenAIRealtimeModel(BidiModel):
             except asyncio.CancelledError:
                 pass
 
-        try:
-            await self.websocket.close()
-        except Exception as e:
-            logger.warning("Error closing OpenAI Realtime WebSocket: %s", e)
+        if self.websocket is not None:
+            try:
+                await self.websocket.close()
+            except Exception as e:
+                logger.warning("Error closing OpenAI Realtime WebSocket: %s", e)
 
         logger.debug("OpenAI Realtime connection closed")
 
-    async def _send_event(self, event: dict[str, any]) -> None:
+    async def _send_event(self, event: dict[str, Any]) -> None:
         """Send event to OpenAI via WebSocket."""
+        if self.websocket is None:
+            raise RuntimeError("WebSocket connection not established")
+
         try:
             message = json.dumps(event)
             await self.websocket.send(message)

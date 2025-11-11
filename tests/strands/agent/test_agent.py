@@ -2083,7 +2083,11 @@ def test_agent_tool_caller_interrupt():
 
 
 def test_agent_tool_caller_interrupt_activated():
-    agent = Agent()
+    @strands.tool(context=True)
+    def test_tool(tool_context):
+        tool_context.interrupt("test-interrupt")
+
+    agent = Agent(tools=[test_tool])
     agent._interrupt_state.activated = True
 
     exp_message = r"cannot directly call tool during interrupt"
@@ -2240,8 +2244,8 @@ def test_agent_backwards_compatibility_single_text_block():
 
     # Should extract text for backwards compatibility
     assert agent.system_prompt == text
-    
-    
+
+
 @pytest.mark.parametrize(
     "content, expected",
     [

@@ -15,7 +15,7 @@ import asyncio
 import base64
 import logging
 import uuid
-from typing import Any, AsyncIterable, Dict, List, Optional
+from typing import Any, AsyncIterable, Dict, List, Literal, Optional
 
 from google import genai
 from google.genai import types as genai_types
@@ -60,7 +60,7 @@ class BidiGeminiLiveModel(BidiModel):
         model_id: str = "models/gemini-2.0-flash-live-preview-04-09",
         api_key: Optional[str] = None,
         live_config: Optional[Dict[str, Any]] = None,
-        **kwargs,
+        **kwargs: Any,
     ):
         """Initialize Gemini Live API bidirectional model.
 
@@ -81,22 +81,22 @@ class BidiGeminiLiveModel(BidiModel):
             client_kwargs["api_key"] = api_key
 
         # Use v1alpha for Live API as it has better model support
-        client_kwargs["http_options"] = {"api_version": "v1alpha"}
+        client_kwargs["http_options"] = {"api_version": "v1alpha"}  # type: ignore
 
-        self.client = genai.Client(**client_kwargs)
+        self.client = genai.Client(**client_kwargs)  # type: ignore
 
         # Connection state (initialized in start())
         self.live_session = None
         self.live_session_context_manager = None
-        self.connection_id = None
-        self._active = False
+        self.connection_id: str = ""
+        self._active: bool = False
 
     async def start(
         self,
         system_prompt: Optional[str] = None,
         tools: Optional[List[ToolSpec]] = None,
         messages: Optional[Messages] = None,
-        **kwargs,
+        **kwargs: Any,
     ) -> None:
         """Establish bidirectional connection with Gemini Live API.
 
@@ -118,7 +118,7 @@ class BidiGeminiLiveModel(BidiModel):
             live_config = self._build_live_config(system_prompt, tools, **kwargs)
 
             # Create the context manager
-            self.live_session_context_manager = self.client.aio.live.connect(model=self.model_id, config=live_config)
+            self.live_session_context_manager = self.client.aio.live.connect(model=self.model_id, config=live_config)  # type: ignore
 
             # Enter the context manager
             self.live_session = await self.live_session_context_manager.__aenter__()
@@ -210,7 +210,7 @@ class BidiGeminiLiveModel(BidiModel):
                 # Check if the transcription object has text content
                 if hasattr(input_transcript, "text") and input_transcript.text:
                     transcription_text = input_transcript.text
-                    role = getattr(input_transcript, "role", "user")
+                    role: Literal["user", "assistant"] = getattr(input_transcript, "role", "user")
                     logger.debug("text=<%s> | input transcription detected", transcription_text)
                     return BidiTranscriptStreamEvent(
                         delta={"text": transcription_text},
@@ -344,8 +344,6 @@ class BidiGeminiLiveModel(BidiModel):
                 tool_result = content.get("tool_result")
                 if tool_result:
                     await self._send_tool_result(tool_result)
-            else:
-                logger.warning("content_type=<%s> | unknown content type", type(content))
         except Exception as e:
             logger.error("error=<%s> | error sending content", e)
             raise  # Propagate exception for debugging in experimental code

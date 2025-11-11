@@ -11,6 +11,7 @@ The Agent interface supports two complementary interaction patterns:
 
 import json
 import logging
+import random
 import warnings
 from typing import (
     TYPE_CHECKING,
