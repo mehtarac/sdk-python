@@ -6,12 +6,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent.parent))
 
-from strands_tools import calculator
-
 from strands.experimental.bidirectional_streaming.agent.agent import BidiAgent
-from strands.experimental.bidirectional_streaming.io.audio import AudioIO
 from strands.experimental.bidirectional_streaming.models.novasonic import BidiNovaSonicModel
-
+from strands.experimental.bidirectional_streaming.io.audio import AudioIO
+from strands_tools import calculator
 
 async def main():
     """Test the BidirectionalAgent API."""
@@ -20,7 +18,7 @@ async def main():
     model = BidiNovaSonicModel(region="us-east-1")
 
     async with BidiAgent(model=model, tools=[calculator]) as agent:
-        print("New BidirectionalAgent Experience")
+        print("New BidiAgent Experience")
         print("Try asking: 'What is 25 times 8?' or 'Calculate the square root of 144'")
         await agent.run(io_channels=[adapter])
 
