@@ -33,6 +33,8 @@ from ..types.events import (
     BidiImageInputEvent,
     BidiInputEvent,
     BidiInterruptionEvent,
+    BidiOutputEvent,
+    BidiUsageEvent,
     BidiTextInputEvent,
     BidiTranscriptStreamEvent,
     BidiUsageEvent,
@@ -57,7 +59,7 @@ class BidiGeminiLiveModel(BidiModel):
 
     def __init__(
         self,
-        model_id: str = "models/gemini-2.0-flash-live-preview-04-09",
+        model_id: str = "gemini-2.5-flash-native-audio-preview-09-2025",
         api_key: Optional[str] = None,
         live_config: Optional[Dict[str, Any]] = None,
         **kwargs: Any,
@@ -73,8 +75,20 @@ class BidiGeminiLiveModel(BidiModel):
         # Model configuration
         self.model_id = model_id
         self.api_key = api_key
-        self.live_config = live_config or {}
-
+        
+        # Set default live_config with transcription enabled
+        default_config = {
+            "response_modalities": ["AUDIO"],
+            "outputAudioTranscription": {},  # Enable output transcription by default
+            "inputAudioTranscription": {}    # Enable input transcription by default
+        }
+        
+        # Merge user config with defaults (user config takes precedence)
+        if live_config:
+            default_config.update(live_config)
+        
+        self.live_config = default_config
+        
         # Create Gemini client with proper API version
         client_kwargs = {}
         if api_key:
@@ -155,8 +169,8 @@ class BidiGeminiLiveModel(BidiModel):
                 role = "model" if message["role"] == "assistant" else message["role"]
                 content = genai_types.Content(role=role, parts=content_parts)
                 await self.live_session.send_client_content(turns=content)
-
-    async def receive(self) -> AsyncIterable[Dict[str, Any]]:
+    
+    async def receive(self) -> AsyncIterable[BidiOutputEvent]:
         """Receive Gemini Live API events and convert to provider-agnostic format."""
         # Emit connection start event
         yield BidiConnectionStartEvent(connection_id=self.connection_id, model=self.model_id)
@@ -168,12 +182,11 @@ class BidiGeminiLiveModel(BidiModel):
                     async for message in self.live_session.receive():
                         if not self._active:
                             break
-
-                        # Convert to provider-agnostic format
-                        provider_event = self._convert_gemini_live_event(message)
-                        if provider_event:
-                            yield provider_event
-
+                        
+                        # Convert to provider-agnostic format (always returns list)
+                        for event in self._convert_gemini_live_event(message):
+                            yield event
+                    
                     # SDK exits receive loop after turn_complete - restart automatically
                     if self._active:
                         logger.debug("Restarting receive loop after turn completion")
@@ -189,8 +202,8 @@ class BidiGeminiLiveModel(BidiModel):
         finally:
             # Emit connection close event when exiting
             yield BidiConnectionCloseEvent(connection_id=self.connection_id, reason="complete")
-
-    def _convert_gemini_live_event(self, message: LiveServerMessage) -> Optional[Dict[str, Any]]:
+    
+    def _convert_gemini_live_event(self, message: LiveServerMessage) -> List[BidiOutputEvent]:
         """Convert Gemini Live API events to provider-agnostic format.
 
         Handles different types of content:
@@ -198,75 +211,99 @@ class BidiGeminiLiveModel(BidiModel):
         - outputTranscription: Model's audio transcribed to text
         - modelTurn text: Text response from the model
         - usageMetadata: Token usage information
+        
+        Returns:
+            List of event dicts (empty list if no events to emit).
         """
         try:
             # Handle interruption first (from server_content)
             if message.server_content and message.server_content.interrupted:
-                return BidiInterruptionEvent(reason="user_speech")
-
+                return [BidiInterruptionEvent(reason="user_speech")]
+            
             # Handle input transcription (user's speech) - emit as transcript event
             if message.server_content and message.server_content.input_transcription:
                 input_transcript = message.server_content.input_transcription
                 # Check if the transcription object has text content
                 if hasattr(input_transcript, "text") and input_transcript.text:
                     transcription_text = input_transcript.text
-                    role: Literal["user", "assistant"] = getattr(input_transcript, "role", "user")
-                    logger.debug("text=<%s> | input transcription detected", transcription_text)
-                    return BidiTranscriptStreamEvent(
+                    role = getattr(input_transcript, 'role', 'user')
+                    logger.debug(f"Input transcription detected: {transcription_text}")
+                    return [BidiTranscriptStreamEvent(
                         delta={"text": transcription_text},
                         text=transcription_text,
                         role=role.lower() if isinstance(role, str) else "user",
                         is_final=True,
-                        current_transcript=transcription_text,
-                    )
-
+                        current_transcript=transcription_text
+                    )]
+            
             # Handle output transcription (model's audio) - emit as transcript event
             if message.server_content and message.server_content.output_transcription:
                 output_transcript = message.server_content.output_transcription
                 # Check if the transcription object has text content
                 if hasattr(output_transcript, "text") and output_transcript.text:
                     transcription_text = output_transcript.text
-                    role = getattr(output_transcript, "role", "assistant")
-                    logger.debug("text=<%s> | output transcription detected", transcription_text)
-                    return BidiTranscriptStreamEvent(
+                    role = getattr(output_transcript, 'role', 'assistant')
+                    logger.debug(f"Output transcription detected: {transcription_text}")
+                    return [BidiTranscriptStreamEvent(
                         delta={"text": transcription_text},
                         text=transcription_text,
                         role=role.lower() if isinstance(role, str) else "assistant",
                         is_final=True,
-                        current_transcript=transcription_text,
-                    )
-
-            # Handle text output from model
-            if message.text:
-                role = getattr(message, "role", "assistant")
-                logger.debug("text=<%s> | text output as transcript", message.text)
-                return BidiTranscriptStreamEvent(
-                    delta={"text": message.text},
-                    text=message.text,
-                    role=role.lower() if isinstance(role, str) else "assistant",
-                    is_final=True,
-                    current_transcript=message.text,
-                )
-
+                        current_transcript=transcription_text
+                    )]
+            
             # Handle audio output using SDK's built-in data property
+            # Check this BEFORE text to avoid triggering warning on mixed content
             if message.data:
                 # Convert bytes to base64 string for JSON serializability
-                audio_b64 = base64.b64encode(message.data).decode("utf-8")
-                return BidiAudioStreamEvent(
-                    audio=audio_b64, format="pcm", sample_rate=GEMINI_OUTPUT_SAMPLE_RATE, channels=GEMINI_CHANNELS
-                )
-
-            # Handle tool calls
+                audio_b64 = base64.b64encode(message.data).decode('utf-8')
+                return [BidiAudioStreamEvent(
+                    audio=audio_b64,
+                    format="pcm",
+                    sample_rate=GEMINI_OUTPUT_SAMPLE_RATE,
+                    channels=GEMINI_CHANNELS
+                )]
+            
+            # Handle text output from model_turn (avoids warning by checking parts directly)
+            if message.server_content and message.server_content.model_turn:
+                model_turn = message.server_content.model_turn
+                if model_turn.parts:
+                    # Concatenate all text parts (Gemini may send multiple parts)
+                    text_parts = []
+                    for part in model_turn.parts:
+                        # Log all part types for debugging
+                        part_attrs = {attr: getattr(part, attr, None) for attr in dir(part) if not attr.startswith('_')}
+                        
+                        # Check if part has text attribute and it's not empty
+                        if hasattr(part, 'text') and part.text:
+                            text_parts.append(part.text)
+                    
+                    if text_parts:
+                        full_text = " ".join(text_parts)
+                        return [BidiTranscriptStreamEvent(
+                            delta={"text": full_text},
+                            text=full_text,
+                            role="assistant",
+                            is_final=True,
+                            current_transcript=full_text
+                        )]
+            
+            # Handle tool calls - return list to support multiple tool calls
             if message.tool_call and message.tool_call.function_calls:
+                tool_events = []
                 for func_call in message.tool_call.function_calls:
                     tool_use_event: ToolUse = {
                         "toolUseId": func_call.id,
                         "name": func_call.name,
                         "input": func_call.args or {},
                     }
-                    # Return ToolUseStreamEvent for consistency with standard agent
-                    return ToolUseStreamEvent(delta={"toolUse": tool_use_event}, current_tool_use=tool_use_event)
-
+                    # Create ToolUseStreamEvent for consistency with standard agent
+                    tool_events.append(ToolUseStreamEvent(
+                        delta={"toolUse": tool_use_event},
+                        current_tool_use=tool_use_event
+                    ))
+                return tool_events
+            
             # Handle usage metadata
             if hasattr(message, "usage_metadata") and message.usage_metadata:
                 usage = message.usage_metadata
@@ -296,29 +333,30 @@ class BidiGeminiLiveModel(BidiModel):
                             if existing:
                                 existing["output_tokens"] = detail.token_count
                             else:
-                                modality_details.append(
-                                    {"modality": modality_str, "input_tokens": 0, "output_tokens": detail.token_count}
-                                )
-
-                return BidiUsageEvent(
+                                modality_details.append({
+                                    "modality": modality_str,
+                                    "input_tokens": 0,
+                                    "output_tokens": detail.token_count
+                                })
+                
+                return [BidiUsageEvent(
                     input_tokens=usage.prompt_token_count or 0,
                     output_tokens=usage.response_token_count or 0,
                     total_tokens=usage.total_token_count or 0,
                     modality_details=modality_details if modality_details else None,
-                    cache_read_input_tokens=usage.cached_content_token_count
-                    if usage.cached_content_token_count
-                    else None,
-                )
-
+                    cache_read_input_tokens=usage.cached_content_token_count if usage.cached_content_token_count else None
+                )]
+            
             # Silently ignore setup_complete and generation_complete messages
-            return None
-
+            return []
+            
         except Exception as e:
             logger.error("Error converting Gemini Live event: %s", e)
             logger.error("Message type: %s", type(message).__name__)
-            logger.error("Message attributes: %s", [attr for attr in dir(message) if not attr.startswith("_")])
-            return None
-
+            logger.error("Message attributes: %s", [attr for attr in dir(message) if not attr.startswith('_')])
+            # Return ErrorEvent in list so caller can handle it
+            return [BidiErrorEvent(error=e)]
+    
     async def send(
         self,
         content: BidiInputEvent | ToolResultEvent,
