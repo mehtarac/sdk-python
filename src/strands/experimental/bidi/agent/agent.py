@@ -406,6 +406,7 @@ class BidiAgent:
             await agent.run(inputs=[audio_io.input()], outputs=[audio_io.output(), text_io.output()])
             ```
         """
+
         async def run_inputs():
             while self.active:
                 for input_ in inputs:
@@ -420,6 +421,8 @@ class BidiAgent:
             async for event in self.receive():
                 for output in outputs:
                     await output(event)
+
+        await self.start()
 
         for input_ in inputs:
             await input_.start()
@@ -436,6 +439,8 @@ class BidiAgent:
 
             for output in outputs:
                 await output.stop()
+
+            await self.stop()
 
     def _validate_active_connection(self) -> None:
         """Validate that an active connection exists.
