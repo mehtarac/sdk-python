@@ -11,7 +11,7 @@ import logging
 import pyaudio
 
 from ..types.io import BidiInput, BidiOutput
-from ..types.events import BidiAudioInputEvent, BidiAudioStreamEvent, BidiOutputEvent
+from ..types.events import BidiAudioInputEvent, BidiAudioStreamEvent, BidiInterruptionEvent, BidiOutputEvent
 
 logger = logging.getLogger(__name__)
 
@@ -48,22 +48,46 @@ class _BidiAudioOutput(BidiOutput):
         """Store reference to pyaudio instance."""
         self.audio = audio
 
+        self._event_queue = None
+        self._event_task = None
+
     async def start(self) -> None:
         """Start audio output."""
         self.audio._start()
+
+        self._output_queue = asyncio.Queue()
+        self._output_task = asyncio.create_task(self._output())
 
     async def stop(self) -> None:
         """Stop audio output."""
         self.audio._stop()
 
+        self._output_queue.put_nowait(None)
+        self._output_task.cancel()
+        await self._output_task
+
+        self._output_queue = None
+        self._output_task = None
+
     async def __call__(self, event: BidiOutputEvent) -> None:
         """Handle audio events with direct stream writing."""
-        if isinstance(event, BidiAudioStreamEvent):
-            self.audio.output_stream.write(base64.b64decode(event["audio"]))
+        if isinstance(event, BidiInterruptionEvent):
+            for _ in range(self._output_queue.qsize()):
+                self._output_queue.get_nowait()
 
-        # TODO: Outputing audio to speakers is a sync operation. Adding sleep to prevent event loop hogging. Will
-        # follow up on identifying a cleaner approach.
-        await asyncio.sleep(0.01)
+        elif isinstance(event, BidiAudioStreamEvent):
+            await self._output_queue.put(base64.b64decode(event["audio"]))
+
+    async def _output(self) -> None:
+        while True:
+            data = await self._output_queue.get()
+            if not data:
+                break
+
+            self.audio.output_stream.write(data)
+            # TODO: Outputing audio to speakers is a sync operation. Adding sleep to prevent event loop hogging. Will
+            # follow up on identifying a cleaner approach.
+            await asyncio.sleep(0.01)
 
 
 class BidiAudioIO:
