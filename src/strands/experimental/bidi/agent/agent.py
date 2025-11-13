@@ -426,7 +426,7 @@ class BidiAgent:
                 await input_.start()
 
         for output in outputs:
-            if hasattr(input_, "start"):
+            if hasattr(output, "start"):
                 await output.start()
 
         try:
@@ -438,7 +438,7 @@ class BidiAgent:
                     await input_.stop()
 
             for output in outputs:
-                if hasattr(input_, "stop"):
+                if hasattr(output, "stop"):
                     await output.stop()
 
     def _validate_active_connection(self) -> None:
