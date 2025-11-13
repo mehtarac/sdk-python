@@ -421,6 +421,8 @@ class BidiAgent:
                 for output in outputs:
                     await output(event)
 
+        await self.start()
+
         for input_ in inputs:
             await input_.start()
 
@@ -436,6 +438,8 @@ class BidiAgent:
 
             for output in outputs:
                 await output.stop()
+
+            await self.stop()
 
     def _validate_active_connection(self) -> None:
         """Validate that an active connection exists.

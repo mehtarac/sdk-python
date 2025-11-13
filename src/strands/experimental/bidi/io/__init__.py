@@ -2,5 +2,6 @@
 
 from .audio import BidiAudioIO
 from .text import BidiTextIO
+from .websocket import BidiWebSocketIO
 
-__all__ = ["BidiAudioIO", "BidiTextIO"]
+__all__ = ["BidiAudioIO", "BidiTextIO", "BidiWebSocketIO"]
