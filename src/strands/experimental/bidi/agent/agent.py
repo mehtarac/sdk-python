@@ -406,9 +406,9 @@ class BidiAgent:
             await agent.run(inputs=[audio_io.input()], outputs=[audio_io.output(), text_io.output()])
             ```
         """
-        async def run_inputs():
-            while self.active:
-                for input_ in inputs:
+        async def run_inputs() -> None:
+            async def task(input_: BidiInput) -> None:
+                while self.active:
                     event = await input_()
                     await self.send(event)
 
@@ -416,10 +416,15 @@ class BidiAgent:
                     # and leading to failures. Adding a sleep here as a temporary solution.
                     await asyncio.sleep(0.001)
 
-        async def run_outputs():
+            tasks = [task(input_) for input_ in inputs]
+            await asyncio.gather(*tasks)
+
+        async def run_outputs() -> None:
             async for event in self.receive():
-                for output in outputs:
-                    await output(event)
+                tasks = [output(event) for output in outputs]
+                await asyncio.gather(*tasks)
+
+        await self.start()
 
         for input_ in inputs:
             if hasattr(input_, "start"):
@@ -428,15 +433,11 @@ class BidiAgent:
         for output in outputs:
             if hasattr(output, "start"):
                 await output.start()
-        
-        # Start agent after all IO is ready
-        await self.start()
+
         try:
-            await asyncio.gather(run_inputs(), run_outputs(), return_exceptions=True)
+            await asyncio.gather(run_inputs(), run_outputs())
 
         finally:
-            await self.stop()
-            
             for input_ in inputs:
                 if hasattr(input_, "stop"):
                     await input_.stop()
@@ -444,6 +445,8 @@ class BidiAgent:
             for output in outputs:
                 if hasattr(output, "stop"):
                     await output.stop()
+
+            await self.stop()
 
     def _validate_active_connection(self) -> None:
         """Validate that an active connection exists.
