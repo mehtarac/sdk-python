@@ -1,7 +1,7 @@
 """Send and receive audio data from devices.
 
-Reads user audio from microphone and sends agent audio to speakers.
-Uses pyaudio under the hood.
+Reads user audio from input device and sends agent audio to output device using PyAudio. If a user interrupts the agent,
+the output buffer is cleared to stop playback.
 """
 
 import asyncio
@@ -23,14 +23,15 @@ class _BidiAudioInput(BidiInput):
     
     Attributes:
         _audio: PyAudio instance for audio system access.
-        _microphone: Audio input stream for capturing microphone data.
+        _stream: Audio input stream.
     """
 
     _audio: pyaudio.PyAudio
-    _microphone: pyaudio.Stream
+    _stream: pyaudio.Stream
 
     _CHANNELS: int = 1
     _DEVICE_INDEX: int | None = None
+    _ENCODING: str = "pcm"
     _FORMAT: int = pyaudio.paInt16
     _FRAMES_PER_BUFFER: int = 512
     _RATE: int = 16000
@@ -44,9 +45,9 @@ class _BidiAudioInput(BidiInput):
         self._rate = config.get("input_rate", _BidiAudioInput._RATE)
         
     async def start(self) -> None:
-        """Start microphone."""
+        """Start input stream."""
         self._audio = pyaudio.PyAudio()
-        self._microphone = self._audio.open(
+        self._stream = self._audio.open(
             channels=self._channels,
             format=self._format,
             frames_per_buffer=self._frames_per_buffer,
@@ -56,27 +57,27 @@ class _BidiAudioInput(BidiInput):
         )
 
     async def stop(self) -> None:
-        """Stop microphone."""
-        # TODO: Gives time for microphone thread to exit cleanly and avoids conflicts with Nova threads.
+        """Stop input stream."""
+        # TODO: Provide time for streaming thread to exit cleanly to prevent conflicts with the Nova threads.
         #       See if we can remove after properly handling cancellation for agent.
         await asyncio.sleep(0.1)
 
-        self._microphone.close()
+        self._stream.close()
         self._audio.terminate()
 
-        self._microphone = None
+        self._stream = None
         self._audio = None
 
     async def __call__(self) -> BidiAudioInputEvent:
-        """Read audio from microphone."""
+        """Read audio from input stream."""
         audio_bytes = await asyncio.to_thread(
-            self._microphone.read, self._frames_per_buffer, exception_on_overflow=False
+            self._stream.read, self._frames_per_buffer, exception_on_overflow=False
         )
 
         return BidiAudioInputEvent(
             audio=base64.b64encode(audio_bytes).decode("utf-8"),
             channels=self._channels,
-            format="pcm",
+            format=_BidiAudioInput._ENCODING,
             sample_rate=self._rate,
         )
 
@@ -86,14 +87,14 @@ class _BidiAudioOutput(BidiOutput):
     
     Attributes:
         _audio: PyAudio instance for audio system access.
-        _speaker: Audio output stream for playing audio to speakers.
+        _stream: Audio output stream.
         _buffer: Deque buffer for queuing audio data.
         _buffer_event: Event to signal when buffer has data.
         _output_task: Background task for processing audio output.
     """
 
     _audio: pyaudio.PyAudio
-    _speaker: pyaudio.Stream
+    _stream: pyaudio.Stream
     _buffer: deque
     _buffer_event: asyncio.Event
     _output_task: asyncio.Task
@@ -115,9 +116,9 @@ class _BidiAudioOutput(BidiOutput):
         self._rate = config.get("output_rate", _BidiAudioOutput._RATE)
 
     async def start(self) -> None:
-        """Start speakers."""
+        """Start output stream."""
         self._audio = pyaudio.PyAudio()
-        self._speaker = self._audio.open(
+        self._stream = self._audio.open(
             channels=self._channels,
             format=self._format,
             frames_per_buffer=self._frames_per_buffer,
@@ -130,19 +131,19 @@ class _BidiAudioOutput(BidiOutput):
         self._output_task = asyncio.create_task(self._output())
 
     async def stop(self) -> None:
-        """Stop speakers."""
+        """Stop output stream."""
         self._buffer.clear()
         self._buffer.append(None)
         self._buffer_event.set()
         await self._output_task
 
-        self._speaker.close()
+        self._stream.close()
         self._audio.terminate()
 
         self._output_task = None
         self._buffer = None
         self._buffer_event = None
-        self._speaker = None
+        self._stream = None
         self._audio = None
 
     async def __call__(self, event: BidiOutputEvent) -> None:
@@ -166,7 +167,7 @@ class _BidiAudioOutput(BidiOutput):
                 if not audio_bytes:
                     return
 
-                await asyncio.to_thread(self._speaker.write, audio_bytes)
+                await asyncio.to_thread(self._stream.write, audio_bytes)
 
 
 class BidiAudioIO:
@@ -181,13 +182,13 @@ class BidiAudioIO:
                 - input_device_index (int): Specific input device (optional)
                 - input_format (int): Audio format (default: paInt16)
                 - input_frames_per_buffer (int): Frames per buffer (default: 512)
-                - input_rate (int): Microphone sample rate (default: 16000)
+                - input_rate (int): Input sample rate (default: 16000)
                 - output_buffer_size (int): Maximum output buffer size (default: None)
                 - output_channels (int): Output channels (default: 1)
                 - output_device_index (int): Specific output device (optional)
                 - output_format (int): Audio format (default: paInt16)
                 - output_frames_per_buffer (int): Frames per buffer (default: 512)
-                - output_rate (int): Speaker sample rate (default: 16000)
+                - output_rate (int): Output sample rate (default: 16000)
         """
         self._config = config
 

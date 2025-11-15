@@ -7,7 +7,7 @@ import asyncio
 import logging
 from typing import AsyncIterable, Awaitable, TYPE_CHECKING
 
-from ..types.events import BidiAudioStreamEvent, BidiInterruptionEvent, BidiOutputEvent, BidiTranscriptStreamEvent
+from ..types.events import BidiOutputEvent, BidiTranscriptStreamEvent
 from ....types._events import ToolResultEvent, ToolResultMessageEvent, ToolStreamEvent, ToolUseStreamEvent
 from ....types.content import Message
 from ....types.tools import ToolResult, ToolUse
