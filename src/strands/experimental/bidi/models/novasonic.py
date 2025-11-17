@@ -647,7 +647,9 @@ class BidiNovaSonicModel(BidiModel):
             async with self._send_lock:
                 for event in events:
                     bytes_data = event.encode("utf-8")
-                    chunk = InvokeModelWithBidirectionalStreamInputChunk(value=BidirectionalInputPayloadPart(bytes_=bytes_data))
+                    chunk = InvokeModelWithBidirectionalStreamInputChunk(
+                        value=BidirectionalInputPayloadPart(bytes_=bytes_data)
+                    )
                     await self.stream.input_stream.send(chunk)
                     logger.debug("Successfully sent Nova Sonic event")
 
