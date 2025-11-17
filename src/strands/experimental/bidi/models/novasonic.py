@@ -77,7 +77,6 @@ NOVA_TEXT_CONFIG = {"mediaType": "text/plain"}
 NOVA_TOOL_CONFIG = {"mediaType": "application/json"}
 
 # Timing constants
-EVENT_DELAY = 0.1
 RESPONSE_TIMEOUT = 1.0
 
 
@@ -193,8 +192,8 @@ class BidiNovaSonicModel(BidiModel):
         return events
 
     async def _send_initialization_events(self, events: list[str]) -> None:
-        """Send initialization events with required delays."""
-        await self._send_nova_event(events, EVENT_DELAY)
+        """Send initialization events."""
+        await self._send_nova_event(events)
 
     def _log_event_type(self, nova_event: dict[str, any]) -> None:
         """Log specific Nova Sonic event types for debugging."""
@@ -634,14 +633,13 @@ class BidiNovaSonicModel(BidiModel):
         """Generate connection end event."""
         return json.dumps({"event": {"connectionEnd": {}}})
 
-    async def _send_nova_event(self, events: list[str], delay: int | None = None) -> None:
+    async def _send_nova_event(self, events: list[str]) -> None:
         """Send event JSON string to Nova Sonic stream.
 
         A lock is used to send events in sequence when required (e.g., tool result start, content, and end).
 
         Args:
             events: Jsonified event.
-            delay: Add delay when nova requires extra time to process events (e.g., initialization).
         """
         try:
             async with self._send_lock:
@@ -652,9 +650,6 @@ class BidiNovaSonicModel(BidiModel):
                     )
                     await self.stream.input_stream.send(chunk)
                     logger.debug("Successfully sent Nova Sonic event")
-
-                    if delay:
-                        await asyncio.sleep(delay)
 
         except Exception as e:
             logger.error("Error sending Nova Sonic event: %s", e)
