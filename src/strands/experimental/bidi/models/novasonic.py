@@ -118,6 +118,9 @@ class BidiNovaSonicModel(BidiModel):
         self._current_role = None
         self._generation_stage = None
 
+        # Ensure certain events are sent in sequence when required
+        self._send_lock = asyncio.Lock()
+
         logger.debug("Nova Sonic bidirectional model initialized: %s", model_id)
 
     async def start(
@@ -191,9 +194,7 @@ class BidiNovaSonicModel(BidiModel):
 
     async def _send_initialization_events(self, events: list[str]) -> None:
         """Send initialization events with required delays."""
-        for _i, event in enumerate(events):
-            await self._send_nova_event(event)
-            await asyncio.sleep(EVENT_DELAY)
+        await self._send_nova_event(events, EVENT_DELAY)
 
     def _log_event_type(self, nova_event: dict[str, any]) -> None:
         """Log specific Nova Sonic event types for debugging."""
@@ -301,7 +302,7 @@ class BidiNovaSonicModel(BidiModel):
             }
         )
 
-        await self._send_nova_event(audio_content_start)
+        await self._send_nova_event([audio_content_start])
         self.audio_connection_active = True
 
     async def _send_audio_content(self, audio_input: BidiAudioInputEvent) -> None:
@@ -324,7 +325,7 @@ class BidiNovaSonicModel(BidiModel):
             }
         )
 
-        await self._send_nova_event(audio_event)
+        await self._send_nova_event([audio_event])
 
     async def _end_audio_input(self) -> None:
         """Internal: End current audio input connection to trigger Nova Sonic processing."""
@@ -337,7 +338,7 @@ class BidiNovaSonicModel(BidiModel):
             {"event": {"contentEnd": {"promptName": self.connection_id, "contentName": self.audio_content_name}}}
         )
 
-        await self._send_nova_event(audio_content_end)
+        await self._send_nova_event([audio_content_end])
         self.audio_connection_active = False
 
     async def _send_text_content(self, text: str) -> None:
@@ -348,9 +349,7 @@ class BidiNovaSonicModel(BidiModel):
             self._get_text_input_event(content_name, text),
             self._get_content_end_event(content_name),
         ]
-
-        for event in events:
-            await self._send_nova_event(event)
+        await self._send_nova_event(events)
 
     async def _send_interrupt(self) -> None:
         """Internal: Send interruption signal to Nova Sonic."""
@@ -366,7 +365,7 @@ class BidiNovaSonicModel(BidiModel):
                 }
             }
         )
-        await self._send_nova_event(interrupt_event)
+        await self._send_nova_event([interrupt_event])
 
     async def _send_tool_result(self, tool_result: ToolResult) -> None:
         """Internal: Send tool result using Nova Sonic toolResult format."""
@@ -389,9 +388,7 @@ class BidiNovaSonicModel(BidiModel):
             self._get_tool_result_event(content_name, result_data),
             self._get_content_end_event(content_name),
         ]
-
-        for event in events:
-            await self._send_nova_event(event)
+        await self._send_nova_event(events)
 
     async def stop(self) -> None:
         """Close Nova Sonic connection with proper cleanup sequence."""
@@ -408,12 +405,10 @@ class BidiNovaSonicModel(BidiModel):
 
             # Send cleanup events
             cleanup_events = [self._get_prompt_end_event(), self._get_connection_end_event()]
-
-            for event in cleanup_events:
-                try:
-                    await self._send_nova_event(event)
-                except Exception as e:
-                    logger.warning("Error during Nova Sonic cleanup: %s", e)
+            try:
+                await self._send_nova_event(cleanup_events)
+            except Exception as e:
+                logger.warning("Error during Nova Sonic cleanup: %s", e)
 
             # Close stream
             try:
@@ -639,14 +634,25 @@ class BidiNovaSonicModel(BidiModel):
         """Generate connection end event."""
         return json.dumps({"event": {"connectionEnd": {}}})
 
-    async def _send_nova_event(self, event: str) -> None:
-        """Send event JSON string to Nova Sonic stream."""
+    async def _send_nova_event(self, events: list[str], delay: int | None = None) -> None:
+        """Send event JSON string to Nova Sonic stream.
+
+        A lock is used to send events in sequence when required (e.g., tool result start, content, and end).
+
+        Args:
+            events: Jsonified event.
+            delay: Add delay when nova requires extra time to process events (e.g., initialization).
+        """
         try:
-            # Event is already a JSON string
-            bytes_data = event.encode("utf-8")
-            chunk = InvokeModelWithBidirectionalStreamInputChunk(value=BidirectionalInputPayloadPart(bytes_=bytes_data))
-            await self.stream.input_stream.send(chunk)
-            logger.debug("Successfully sent Nova Sonic event")
+            async with self._send_lock:
+                for event in events:
+                    bytes_data = event.encode("utf-8")
+                    chunk = InvokeModelWithBidirectionalStreamInputChunk(value=BidirectionalInputPayloadPart(bytes_=bytes_data))
+                    await self.stream.input_stream.send(chunk)
+                    logger.debug("Successfully sent Nova Sonic event")
+
+                    if delay:
+                        await asyncio.sleep(delay)
 
         except Exception as e:
             logger.error("Error sending Nova Sonic event: %s", e)
