@@ -31,7 +31,7 @@ from smithy_core.aio.eventstream import DuplexEventStream
 from ....types._events import ToolResultEvent, ToolUseStreamEvent
 from ....types.content import Messages
 from ....types.tools import ToolResult, ToolSpec, ToolUse
-from .._async import start, stop
+from .._async import stop
 from ..types.events import (
     BidiAudioInputEvent,
     BidiAudioStreamEvent,
@@ -113,7 +113,6 @@ class BidiNovaSonicModel(BidiModel):
 
         logger.debug("model_id=<%s> | nova sonic model initialized", model_id)
 
-    @start
     async def start(
         self,
         system_prompt: str | None = None,
@@ -139,17 +138,24 @@ class BidiNovaSonicModel(BidiModel):
 
         self._connection_id = str(uuid.uuid4())
 
-        config = Config(
-            endpoint_uri=f"https://bedrock-runtime.{self.region}.amazonaws.com",
-            region=self.region,
-            aws_credentials_identity_resolver=EnvironmentCredentialsResolver(),
-            auth_scheme_resolver=HTTPAuthSchemeResolver(),
-            auth_schemes={"aws.auth#sigv4": SigV4AuthScheme(service="bedrock")},
-        )
-        client = BedrockRuntimeClient(config=config)
-        self._stream = await client.invoke_model_with_bidirectional_stream(
-            InvokeModelWithBidirectionalStreamOperationInput(model_id=self.model_id)
-        )
+        try:
+            config = Config(
+                endpoint_uri=f"https://bedrock-runtime.{self.region}.amazonaws.com",
+                region=self.region,
+                aws_credentials_identity_resolver=EnvironmentCredentialsResolver(),
+                auth_scheme_resolver=HTTPAuthSchemeResolver(),
+                auth_schemes={"aws.auth#sigv4": SigV4AuthScheme(service="bedrock")},
+            )
+            client = BedrockRuntimeClient(config=config)
+            print("I AM GETTING TO HERE")
+            self._stream = await client.invoke_model_with_bidirectional_stream(
+                InvokeModelWithBidirectionalStreamOperationInput(model_id=self.model_id)
+            )
+        except BaseException as error:
+            print(f"WHAT IS THE ERROR IF ANY: {type(error)}")
+            raise
+        finally:
+            print("MODEL FINALLY")
         logger.debug("region=<%s> | nova sonic client initialized", self.region)
 
         init_events = self._build_initialization_events(system_prompt, tools, messages)
@@ -204,18 +210,15 @@ class BidiNovaSonicModel(BidiModel):
         logger.debug("nova event stream starting")
         yield BidiConnectionStartEvent(connection_id=self._connection_id, model=self.model_id)
 
-        try:
-            _, output = await self._stream.await_output()
-            while True:
-                event_data = await output.receive()
-                nova_event = json.loads(event_data.value.bytes_.decode("utf-8"))["event"]
-                self._log_event_type(nova_event)
+        _, output = await self._stream.await_output()
+        while True:
+            event_data = await output.receive()
+            nova_event = json.loads(event_data.value.bytes_.decode("utf-8"))["event"]
+            self._log_event_type(nova_event)
 
-                model_event = self._convert_nova_event(nova_event)
-                if model_event:
-                    yield model_event
-        finally:
-            yield BidiConnectionCloseEvent(connection_id=self._connection_id, reason="complete")
+            model_event = self._convert_nova_event(nova_event)
+            if model_event:
+                yield model_event
 
     async def send(self, content: BidiInputEvent | ToolResultEvent) -> None:
         """Unified send method for all content types. Sends the given content to Nova Sonic.
@@ -346,7 +349,7 @@ class BidiNovaSonicModel(BidiModel):
             await self._send_nova_events(cleanup_events)
 
         async def stop_stream() -> None:
-            if not self._connection_id or not self._stream:
+            if not hasattr(self, "_stream"):
                 return
 
             await self._stream.close()
