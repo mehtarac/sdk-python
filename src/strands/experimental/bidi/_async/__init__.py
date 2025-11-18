@@ -3,7 +3,10 @@
 from functools import wraps
 from typing import Any, Awaitable, Callable, TypeVar, cast
 
-from .types._async import Startable
+from ._task_pool import _TaskPool
+from ..types._async import Startable
+
+__all__ = ["_TaskPool"]
 
 F = TypeVar("F", bound=Callable[..., Awaitable[None]])
 

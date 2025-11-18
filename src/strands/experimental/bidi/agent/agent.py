@@ -281,14 +281,16 @@ class BidiAgent:
                 - dict: Event dictionary (will be reconstructed to TypedEvent)
 
         Raises:
-            ValueError: If no active session or invalid input type.
+            RuntimeError: If start has not been called.
+            ValueError: If invalid input type.
 
         Example:
             await agent.send("Hello")
             await agent.send(BidiAudioInputEvent(audio="base64...", format="pcm", ...))
             await agent.send({"type": "bidirectional_text_input", "text": "Hello", "role": "user"})
         """
-        self._validate_active_connection()
+        if not self._started:
+            raise RuntimeError("must call start")
 
         # Handle string input
         if isinstance(input_data, str):
@@ -341,12 +343,15 @@ class BidiAgent:
     async def receive(self) -> AsyncIterable[BidiOutputEvent]:
         """Receive events from the model including audio, text, and tool calls.
 
-        Yields model output events processed by background tasks including audio output,
-        text responses, tool calls, and connection updates.
-
         Yields:
             Model and tool call events.
+
+        Raises:
+            RuntimeError: If start has not been called.
         """
+        if not self._started:
+            raise RuntimeError("must call start")
+
         async for event in self._loop.receive():
             yield event
 
@@ -370,39 +375,14 @@ class BidiAgent:
         await self.start()
         return self
 
-    async def __aexit__(self, exc_type: type[BaseException] | None, exc_val: BaseException | None, exc_tb: Any) -> None:
+    async def __aexit__(self, *_) -> None:
         """Async context manager exit point.
 
         Automatically ends the connection and cleans up resources including
         when exiting the context, regardless of whether an exception occurred.
-
-        Args:
-            exc_type: Exception type if an exception occurred, None otherwise.
-            exc_val: Exception value if an exception occurred, None otherwise.
-            exc_tb: Exception traceback if an exception occurred, None otherwise.
         """
-        try:
-            logger.debug("context_manager=<exit> | cleaning up connection")
-
-            # Cleanup agent connection
-            await self.stop()
-
-        except Exception as cleanup_error:
-            if exc_type is None:
-                # No original exception, re-raise cleanup error
-                logger.error("cleanup_error=<%s> | error during context manager cleanup", cleanup_error)
-                raise
-            else:
-                # Original exception exists, log cleanup error but don't suppress original
-                logger.error(
-                    "cleanup_error=<%s> | error during context manager cleanup suppressed due to original exception",
-                    cleanup_error,
-                )
-
-    @property
-    def active(self) -> bool:
-        """True if agent loop started, False otherwise."""
-        return self._loop.active
+        logger.debug("context_manager=<exit> | cleaning up adapters and connection")
+        await self.stop()
 
     async def run(self, inputs: list[BidiInput], outputs: list[BidiOutput]) -> None:
         """Run the agent using provided IO channels for bidirectional communication.
@@ -422,7 +402,7 @@ class BidiAgent:
 
         async def run_inputs() -> None:
             async def task(input_: BidiInput) -> None:
-                while self.active:
+                while True:
                     event = await input_()
                     await self.send(event)
 
@@ -457,12 +437,3 @@ class BidiAgent:
                     await output.stop()
 
             await self.stop()
-
-    def _validate_active_connection(self) -> None:
-        """Validate that an active connection exists.
-
-        Raises:
-            ValueError: If no active connection.
-        """
-        if not self.active:
-            raise ValueError("No active conversation. Call start() first or use async context manager.")

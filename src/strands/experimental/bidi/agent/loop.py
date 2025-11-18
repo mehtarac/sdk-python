@@ -5,22 +5,21 @@ The agent loop handles the events received from the model and executes tools whe
 
 import asyncio
 import logging
-from typing import TYPE_CHECKING, Any, AsyncIterable, Awaitable
+from typing import TYPE_CHECKING, Any, AsyncIterable
 
-from ....types._events import ToolResultEvent, ToolResultMessageEvent, ToolStreamEvent, ToolUseStreamEvent
-from ....types.content import Message
-from ....types.tools import ToolResult, ToolUse
+from .._async import _TaskPool, start, stop
 from ..hooks.events import (
     BidiAfterInvocationEvent,
     BidiAfterToolCallEvent,
     BidiBeforeInvocationEvent,
     BidiBeforeToolCallEvent,
+    BidiInterruptionEvent as BidiInterruptionHookEvent,
     BidiMessageAddedEvent,
 )
-from ..hooks.events import (
-    BidiInterruptionEvent as BidiInterruptionHookEvent,
-)
 from ..types.events import BidiInterruptionEvent, BidiOutputEvent, BidiTranscriptStreamEvent
+from ....types._events import ToolResultEvent, ToolResultMessageEvent, ToolStreamEvent, ToolUseStreamEvent
+from ....types.content import Message
+from ....types.tools import ToolResult, ToolUse
 
 if TYPE_CHECKING:
     from .agent import BidiAgent
@@ -33,16 +32,13 @@ class _BidiAgentLoop:
 
     Attributes:
         _agent: BidiAgent instance to loop.
+        _started: Flag if agent loop has started.
         _event_queue: Queue model and tool call events for receiver.
-        _stop_event: Sentinel to mark end of loop.
-        _tasks: Track active async tasks created in loop.
-        _active: Flag if agent loop is started.
+        _task_pool: Track active async tasks created in loop.
     """
 
     _event_queue: asyncio.Queue
-    _stop_event: object
-    _tasks: set
-    _active: bool
+    _task_pool: _TaskPool
 
     def __init__(self, agent: "BidiAgent") -> None:
         """Initialize members of the agent loop.
@@ -53,23 +49,19 @@ class _BidiAgentLoop:
             agent: Bidirectional agent to loop over.
         """
         self._agent = agent
-        self._active: bool = False
+        self._started = False
 
+    @start
     async def start(self) -> None:
         """Start the agent loop.
 
         The agent model is started as part of this call.
         """
-        if self.active:
-            return
+        if self._started:
+            raise RuntimeError("call stop before starting again")
 
         logger.debug("agent loop starting")
 
-        self._event_queue = asyncio.Queue(maxsize=1)
-        self._stop_event = object()
-        self._tasks = set()
-
-        # Emit before invocation event
         await self._agent.hooks.invoke_callbacks_async(BidiBeforeInvocationEvent(agent=self._agent))
 
         await self._agent.model.start(
@@ -78,62 +70,41 @@ class _BidiAgentLoop:
             messages=self._agent.messages,
         )
 
-        self._create_task(self._run_model())
+        self._event_queue = asyncio.Queue(maxsize=1)
 
-        self._active = True
+        self._task_pool = _TaskPool()
+        self._task_pool.create_task(self._run_model())
+
+        self._started = True
 
     async def stop(self) -> None:
         """Stop the agent loop."""
-        if not self.active:
-            return
 
         logger.debug("agent loop stopping")
+        self._started = False
 
-        try:
-            # Cancel all tasks
-            for task in self._tasks:
-                task.cancel()
+        async def stop_tasks() -> None:
+            await self.task_pool.cancel()
 
-            # Wait briefly for tasks to finish their current operations
-            await asyncio.gather(*self._tasks, return_exceptions=True)
+        async def stop_event_queue() -> None:
+            self._event_queue.shutdown(immediate=True)
 
-            # Stop the model
+        async def stop_model() -> None:
             await self._agent.model.stop()
 
-            # Clean up the event queue
-            if not self._event_queue.empty():
-                self._event_queue.get_nowait()
-            self._event_queue.put_nowait(self._stop_event)
-
-            self._active = False
-
+        try:
+            await stop(stop_tasks, stop_event_queue, stop_model)
         finally:
-            # Emit after invocation event (reverse order for cleanup)
             await self._agent.hooks.invoke_callbacks_async(BidiAfterInvocationEvent(agent=self._agent))
 
     async def receive(self) -> AsyncIterable[BidiOutputEvent]:
         """Receive model and tool call events."""
+        if not self._started:
+            raise RuntimeError("must call start")
+
         while True:
             event = await self._event_queue.get()
-            if event is self._stop_event:
-                break
-
             yield event
-
-    @property
-    def active(self) -> bool:
-        """True if agent loop started, False otherwise."""
-        return self._active
-
-    def _create_task(self, coro: Awaitable[None]) -> None:
-        """Utilitly to create async task.
-
-        Adds a clean up callback to run after task completes.
-        """
-        task: asyncio.Task[None] = asyncio.create_task(coro)  # type: ignore
-        task.add_done_callback(lambda task: self._tasks.remove(task))
-
-        self._tasks.add(task)
 
     async def _run_model(self) -> None:
         """Task for running the model.
@@ -142,12 +113,12 @@ class _BidiAgentLoop:
         """
         logger.debug("model task starting")
 
-        async for event in self._agent.model.receive():  # type: ignore
+        async for event in self._agent.model.receive():
             await self._event_queue.put(event)
 
             if isinstance(event, BidiTranscriptStreamEvent):
                 if event["is_final"]:
-                    message: Message = {"role": event["role"], "content": [{"text": event["text"]}]}
+                    message: Message = {"role": "assistant", "content": [{"text": event["text"]}]}
                     self._agent.messages.append(message)
                     await self._agent.hooks.invoke_callbacks_async(
                         BidiMessageAddedEvent(agent=self._agent, message=message)
@@ -159,9 +130,11 @@ class _BidiAgentLoop:
 
                 tool_message: Message = {"role": "assistant", "content": [{"toolUse": tool_use}]}
                 self._agent.messages.append(tool_message)
+                await self._agent.hooks.invoke_callbacks_async(
+                    BidiMessageAddedEvent(agent=self._agent, message=message)
+                )
 
             elif isinstance(event, BidiInterruptionEvent):
-                # Emit interruption hook event
                 await self._agent.hooks.invoke_callbacks_async(
                     BidiInterruptionHookEvent(
                         agent=self._agent,
@@ -182,7 +155,6 @@ class _BidiAgentLoop:
         try:
             tool = self._agent.tool_registry.registry[tool_use["name"]]
 
-            # Emit before tool call event
             await self._agent.hooks.invoke_callbacks_async(
                 BidiBeforeToolCallEvent(
                     agent=self._agent,
@@ -207,7 +179,6 @@ class _BidiAgentLoop:
             result = {"toolUseId": tool_use["toolUseId"], "status": "error", "content": [{"text": f"Error: {str(e)}"}]}
 
         finally:
-            # Emit after tool call event (reverse order for cleanup)
             await self._agent.hooks.invoke_callbacks_async(
                 BidiAfterToolCallEvent(
                     agent=self._agent,
