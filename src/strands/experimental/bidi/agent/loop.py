@@ -7,6 +7,9 @@ import asyncio
 import logging
 from typing import TYPE_CHECKING, Any, AsyncIterable, Awaitable
 
+from opentelemetry import trace as trace_api
+
+from ....telemetry.tracer import serialize
 from ....types._events import ToolResultEvent, ToolResultMessageEvent, ToolStreamEvent, ToolUseStreamEvent
 from ....types.content import Message
 from ....types.tools import ToolResult, ToolUse
@@ -54,6 +57,8 @@ class _BidiAgentLoop:
         """
         self._agent = agent
         self._active: bool = False
+        self._active = False
+        self._loop_span = None
 
     async def start(self) -> None:
         """Start the agent loop.
@@ -78,7 +83,10 @@ class _BidiAgentLoop:
             messages=self._agent.messages,
         )
 
-        self._create_task(self._run_model())
+        # Wrap the model loop in the session span context
+        self._loop_span = self._agent.tracer._start_span("agent_loop", self._agent._session_span)
+        with trace_api.use_span(self._loop_span):
+            self._create_task(self._run_model())
 
         self._active = True
 
@@ -126,9 +134,9 @@ class _BidiAgentLoop:
         return self._active
 
     def _create_task(self, coro: Awaitable[None]) -> None:
-        """Utilitly to create async task.
+        """Utility to create async task.
 
-        Adds a clean up callback to run after task completes.
+        Adds a cleanup callback to run after task completes.
         """
         task: asyncio.Task[None] = asyncio.create_task(coro)  # type: ignore
         task.add_done_callback(lambda task: self._tasks.remove(task))
@@ -146,19 +154,16 @@ class _BidiAgentLoop:
             await self._event_queue.put(event)
 
             if isinstance(event, BidiTranscriptStreamEvent):
+                self._agent.tracer.handle_transcript_event(event, self._agent, self._loop_span)
                 if event["is_final"]:
                     message: Message = {"role": event["role"], "content": [{"text": event["text"]}]}
-                    self._agent.messages.append(message)
                     await self._agent.hooks.invoke_callbacks_async(
                         BidiMessageAddedEvent(agent=self._agent, message=message)
                     )
 
             elif isinstance(event, ToolUseStreamEvent):
-                tool_use = event["current_tool_use"]
+                tool_use = self._agent.tracer.handle_tool_use_event(event, self._agent, self._loop_span)
                 self._create_task(self._run_tool(tool_use))
-
-                tool_message: Message = {"role": "assistant", "content": [{"toolUse": tool_use}]}
-                self._agent.messages.append(tool_message)
 
             elif isinstance(event, BidiInterruptionEvent):
                 # Emit interruption hook event
@@ -178,6 +183,12 @@ class _BidiAgentLoop:
         exception: Exception | None = None
         tool = None
         invocation_state: dict[str, Any] = {}
+
+        tool_span = self._agent.tracer.start_tool_call_span(tool=tool_use, parent_span=self._agent.tracer._model_span)
+
+        tool_span.set_attribute(
+            "gen_ai.input.messages", serialize([{"role": "assistant", "content": [{"toolUse": tool_use}]}])
+        )
 
         try:
             tool = self._agent.tool_registry.registry[tool_use["name"]]
@@ -203,8 +214,19 @@ class _BidiAgentLoop:
                 else:
                     await self._event_queue.put(ToolStreamEvent(tool_use, event))
 
+                tool_span.set_attribute(
+                    "gen_ai.output.messages", serialize([{"role": "user", "content": [{"toolResult": result}]}])
+                )
+            self._agent.tracer.end_tool_call_span(tool_span, result)
+
         except Exception as e:
             result = {"toolUseId": tool_use["toolUseId"], "status": "error", "content": [{"text": f"Error: {str(e)}"}]}
+            # End tool span with error
+            if result:
+                tool_span.set_attribute(
+                    "gen_ai.output.messages", serialize([{"role": "user", "content": [{"toolResult": result}]}])
+                )
+            self._agent.tracer.end_tool_call_span(tool_span, result, error=e)
 
         finally:
             # Emit after tool call event (reverse order for cleanup)
