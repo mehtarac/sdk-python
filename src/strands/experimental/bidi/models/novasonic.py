@@ -31,7 +31,7 @@ from smithy_core.aio.eventstream import DuplexEventStream
 from ....types._events import ToolResultEvent, ToolUseStreamEvent
 from ....types.content import Messages
 from ....types.tools import ToolResult, ToolSpec, ToolUse
-from .._async import start_clean, stop_clean
+from .._async import start, stop
 from ..types.events import (
     BidiAudioInputEvent,
     BidiAudioStreamEvent,
@@ -113,7 +113,7 @@ class BidiNovaSonicModel(BidiModel):
 
         logger.debug("model_id=<%s> | nova sonic model initialized", model_id)
 
-    @start_clean
+    @start
     async def start(
         self,
         system_prompt: str | None = None,
@@ -354,7 +354,7 @@ class BidiNovaSonicModel(BidiModel):
         async def stop_connection() -> None:
             self._connection_id = None
 
-        await stop_clean(stop_events, stop_stream, stop_connection)
+        await stop(stop_events, stop_stream, stop_connection)
 
         logger.debug("nova connection closed")
 

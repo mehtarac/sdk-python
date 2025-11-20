@@ -8,7 +8,7 @@ from .types._async import Startable
 F = TypeVar("F", bound=Callable[..., Awaitable[None]])
 
 
-def start_clean(func: F) -> F:
+def start(func: F) -> F:
     """Call stop if pairing start call fails.
 
     Any resources that did successfully start will still have an opportunity to stop cleanly.
@@ -28,7 +28,7 @@ def start_clean(func: F) -> F:
     return cast(F, wrapper)
 
 
-async def stop_clean(*funcs: F) -> None:
+async def stop(*funcs: F) -> None:
     """Call all stops in sequence and aggregate errors.
 
     A failure in one stop call will not block subsequent stop calls.
