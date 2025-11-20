@@ -15,7 +15,9 @@ Key capabilities:
 import asyncio
 import json
 import logging
-from typing import Any, AsyncIterable
+from typing import Any, AsyncIterable, Mapping, Optional
+
+from opentelemetry import trace as trace_api
 
 from .... import _identifier
 from ....agent.state import AgentState
@@ -27,10 +29,12 @@ from ....tools.registry import ToolRegistry
 from ....tools.watcher import ToolWatcher
 from ....types.content import ContentBlock, Message, Messages
 from ....types.tools import AgentTool, ToolResult, ToolUse
+from ....types.traces import AttributeValue
 from ...tools import ToolProvider
 from ..hooks.events import BidiAgentInitializedEvent, BidiMessageAddedEvent
 from ..models.bidi_model import BidiModel
 from ..models.novasonic import BidiNovaSonicModel
+from ..telemetry.bidi_tracer import get_bidi_tracer
 from ..types.agent import BidiAgentInput
 from ..types.events import BidiAudioInputEvent, BidiImageInputEvent, BidiInputEvent, BidiOutputEvent, BidiTextInputEvent
 from ..types.io import BidiInput, BidiOutput
@@ -63,6 +67,7 @@ class BidiAgent:
         description: str | None = None,
         hooks: list[HookProvider] | None = None,
         state: AgentState | dict | None = None,
+        trace_attributes: Optional[Mapping[str, AttributeValue]] = None,
         **kwargs: Any,
     ):
         """Initialize bidirectional agent.
@@ -80,6 +85,7 @@ class BidiAgent:
             description: Description of what the Agent does.
             hooks: Optional list of hook providers to register for lifecycle events.
             state: Stateful information for the agent. Can be either an AgentState object, or a json serializable dict.
+            trace_attributes: Optional mapping of custom trace attributes to include in spans.
             **kwargs: Additional configuration for future extensibility.
 
         Raises:
@@ -144,6 +150,26 @@ class BidiAgent:
 
         # Emit initialization event
         self.hooks.invoke_callbacks(BidiAgentInitializedEvent(agent=self))
+
+        self.tracer = get_bidi_tracer()
+        self._session_span: Optional[trace_api.Span] = None
+
+        self.trace_attributes: dict[str, AttributeValue] = {}
+        if trace_attributes:
+            for k, v in trace_attributes.items():
+                if isinstance(v, (str, int, float, bool)) or (
+                    isinstance(v, list) and all(isinstance(x, (str, int, float, bool)) for x in v)
+                ):
+                    self.trace_attributes[k] = v
+
+        self._conversation_state = {
+            "user_turns": 0,
+            "assistant_turns": 0,
+            "tool_executions": 0,
+            "interruptions": 0,
+            "audio_chunks_sent": 0,
+            "audio_chunks_received": 0,
+        }
 
     @property
     def tool(self) -> _ToolCaller:
@@ -237,6 +263,32 @@ class BidiAgent:
 
         logger.debug("tool_name=<%s> | direct tool call recorded in message history", tool["name"])
 
+    def _start_agent_trace_span(self) -> trace_api.Span:
+        """Start a trace span for the bidirectional agent session."""
+        model_id = getattr(self.model, "model_id", None)
+        return self.tracer.start_agent_span(
+            messages=self.messages,
+            agent_name=self.name,
+            model_id=model_id,
+            tools=self.tool_names,
+            custom_trace_attributes=self.trace_attributes,
+            tools_config=self.tool_registry.get_all_tools_config(),
+        )
+
+    def _end_agent_trace_span(
+        self,
+        response: Optional[str] = None,
+        error: Optional[Exception] = None,
+    ) -> None:
+        """End the trace span for the bidirectional agent session."""
+        if self._session_span:
+            self.tracer.end_agent_span(
+                span=self._session_span,
+                response=response,
+                error=error,
+            )
+            self._session_span = None
+
     def _filter_tool_parameters_for_recording(self, tool_name: str, input_params: dict[str, Any]) -> dict[str, Any]:
         """Filter input parameters to only include those defined in the tool specification.
 
@@ -263,7 +315,7 @@ class BidiAgent:
         model events, tool execution, and connection management.
         """
         logger.debug("agent starting")
-
+        self._session_span = self._start_agent_trace_span()
         await self._loop.start()
 
     async def send(self, input_data: BidiAgentInput) -> None:
@@ -298,6 +350,10 @@ class BidiAgent:
             self.messages.append(user_message)
             await self.hooks.invoke_callbacks_async(BidiMessageAddedEvent(agent=self, message=user_message))
 
+            if self._session_span:
+                self._session_span.add_event("gen_ai.user.message", attributes={"content": input_data})
+                self._conversation_state["user_turns"] += 1
+
             logger.debug("text_length=<%d> | text sent to model", len(input_data))
             # Create BidiTextInputEvent for send()
             text_event = BidiTextInputEvent(text=input_data, role="user")
@@ -307,6 +363,18 @@ class BidiAgent:
         # Handle BidiInputEvent instances
         # Check this before dict since TypedEvent inherits from dict
         if isinstance(input_data, BidiInputEvent):
+            if hasattr(input_data, "audio") and self._session_span:
+                self._conversation_state["audio_chunks_sent"] += 1
+
+            if hasattr(input_data, "image"):
+                image_msg: Message = {
+                    "role": "user",
+                    "content": [
+                        {"image": input_data.image, "mime_type": getattr(input_data, "mime_type", "image/jpeg")}
+                    ],
+                }
+                self.messages.append(image_msg)
+
             await self.model.send(input_data)
             return
 
@@ -324,6 +392,11 @@ class BidiAgent:
                 )
             elif event_type == "bidi_image_input":
                 input_event = BidiImageInputEvent(image=input_data["image"], mime_type=input_data["mime_type"])
+                image_msg: Message = {
+                    "role": "user",
+                    "content": [{"image": input_data["image"], "mime_type": input_data.get("mime_type", "image/jpeg")}],
+                }
+                self.messages.append(image_msg)
             else:
                 raise ValueError(f"Unknown event type: {event_type}")
 
@@ -348,6 +421,13 @@ class BidiAgent:
             Model and tool call events.
         """
         async for event in self._loop.receive():
+            event_type = event.get("type", "unknown")
+            if "audio" in event_type.lower():
+                if self._session_span and event.get("audio"):
+                    self._conversation_state["audio_chunks_received"] += 1
+            elif "interrupt" in event_type.lower():
+                if self._session_span:
+                    self._conversation_state["interruptions"] += 1
             yield event
 
     async def stop(self) -> None:
@@ -356,6 +436,11 @@ class BidiAgent:
         Terminates the streaming connection, cancels background tasks, and
         closes the connection to the model provider.
         """
+        if self._session_span:
+            for k, v in self._conversation_state.items():
+                self._session_span.set_attribute(f"strands.session.{k}", v)
+
+        self._end_agent_trace_span()
         await self._loop.stop()
 
     async def __aenter__(self) -> "BidiAgent":

@@ -72,7 +72,7 @@ class BidiOpenAIRealtimeModel(BidiModel):
 
     def __init__(
         self,
-        model: str = DEFAULT_MODEL,
+        model_id: str = DEFAULT_MODEL,
         api_key: str | None = None,
         organization: str | None = None,
         project: str | None = None,
@@ -82,7 +82,7 @@ class BidiOpenAIRealtimeModel(BidiModel):
         """Initialize OpenAI Realtime bidirectional model.
 
         Args:
-            model: OpenAI model identifier (default: gpt-realtime).
+            model_id: OpenAI model identifier (default: gpt-realtime).
             api_key: OpenAI API key for authentication.
             organization: OpenAI organization ID for API requests.
             project: OpenAI project ID for API requests.
@@ -90,7 +90,7 @@ class BidiOpenAIRealtimeModel(BidiModel):
             **kwargs: Reserved for future parameters.
         """
         # Model configuration
-        self.model = model
+        self.model_id = model_id
         self.api_key = api_key
         self.organization = organization
         self.project = project
@@ -110,7 +110,7 @@ class BidiOpenAIRealtimeModel(BidiModel):
 
         self._function_call_buffer: dict[str, Any] = {}
 
-        logger.debug("model=<%s> | openai realtime model initialized", model)
+        logger.debug("model=<%s> | openai realtime model initialized", model_id)
 
     async def start(
         self,
@@ -139,7 +139,7 @@ class BidiOpenAIRealtimeModel(BidiModel):
             self._function_call_buffer = {}
 
             # Establish WebSocket connection
-            url = f"{OPENAI_REALTIME_URL}?model={self.model}"
+            url = f"{OPENAI_REALTIME_URL}?model={self.model_id}"
 
             headers = [("Authorization", f"Bearer {self.api_key}")]
             if self.organization:
@@ -276,7 +276,7 @@ class BidiOpenAIRealtimeModel(BidiModel):
     async def receive(self) -> AsyncIterable[BidiOutputEvent]:  # type: ignore
         """Receive OpenAI events and convert to Strands TypedEvent format."""
         # Emit connection start event
-        yield BidiConnectionStartEvent(connection_id=self.connection_id, model=self.model)
+        yield BidiConnectionStartEvent(connection_id=self.connection_id, model=self.model_id)
 
         try:
             while self._active:
