@@ -32,11 +32,10 @@ from smithy_core.aio.eventstream import DuplexEventStream
 from ....types._events import ToolResultEvent, ToolUseStreamEvent
 from ....types.content import Messages
 from ....types.tools import ToolResult, ToolSpec, ToolUse
-from .._async import start, stop
+from .._async import stop_all
 from ..types.events import (
     BidiAudioInputEvent,
     BidiAudioStreamEvent,
-    BidiConnectionCloseEvent,
     BidiConnectionStartEvent,
     BidiInputEvent,
     BidiInterruptionEvent,
@@ -129,7 +128,6 @@ class BidiNovaSonicModel(BidiModel):
 
         logger.debug("model_id=<%s> | nova sonic model initialized", model_id)
 
-    @start
     async def start(
         self,
         system_prompt: str | None = None,
@@ -149,7 +147,7 @@ class BidiNovaSonicModel(BidiModel):
             RuntimeError: If user calls start again without first stopping.
         """
         if self._connection_id:
-            raise RuntimeError("call stop before starting again")
+            raise RuntimeError("model already started | call stop before starting again")
 
         logger.debug("nova connection starting")
 
@@ -235,23 +233,20 @@ class BidiNovaSonicModel(BidiModel):
             RuntimeError: If start has not been called.
         """
         if not self._connection_id:
-            raise RuntimeError("must call start")
+            raise RuntimeError("model not started | call start before receiving")
 
         logger.debug("nova event stream starting")
         yield BidiConnectionStartEvent(connection_id=self._connection_id, model=self.model_id)
 
-        try:
-            _, output = await self._stream.await_output()
-            while True:
-                event_data = await output.receive()
-                nova_event = json.loads(event_data.value.bytes_.decode("utf-8"))["event"]
-                self._log_event_type(nova_event)
+        _, output = await self._stream.await_output()
+        while True:
+            event_data = await output.receive()
+            nova_event = json.loads(event_data.value.bytes_.decode("utf-8"))["event"]
+            self._log_event_type(nova_event)
 
-                model_event = self._convert_nova_event(nova_event)
-                if model_event:
-                    yield model_event
-        finally:
-            yield BidiConnectionCloseEvent(connection_id=self._connection_id, reason="complete")
+            model_event = self._convert_nova_event(nova_event)
+            if model_event:
+                yield model_event
 
     async def send(self, content: BidiInputEvent | ToolResultEvent) -> None:
         """Unified send method for all content types. Sends the given content to Nova Sonic.
@@ -265,7 +260,7 @@ class BidiNovaSonicModel(BidiModel):
             ValueError: If content type not supported (e.g., image content).
         """
         if not self._connection_id:
-            raise RuntimeError("must call start")
+            raise RuntimeError("model not started | call start before sending")
 
         if isinstance(content, BidiTextInputEvent):
             await self._send_text_content(content.text)
@@ -276,7 +271,7 @@ class BidiNovaSonicModel(BidiModel):
             if tool_result:
                 await self._send_tool_result(tool_result)
         else:
-            raise ValueError(f"content_type={type(content)} | content not supported by nova sonic")
+            raise ValueError(f"content_type={type(content)} | content not supported")
 
     async def _start_audio_connection(self) -> None:
         """Internal: Start audio input connection (call once before sending audio chunks)."""
@@ -382,7 +377,7 @@ class BidiNovaSonicModel(BidiModel):
             await self._send_nova_events(cleanup_events)
 
         async def stop_stream() -> None:
-            if not self._connection_id or not self._stream:
+            if not hasattr(self, "_stream"):
                 return
 
             await self._stream.close()
@@ -390,7 +385,7 @@ class BidiNovaSonicModel(BidiModel):
         async def stop_connection() -> None:
             self._connection_id = None
 
-        await stop(stop_events, stop_stream, stop_connection)
+        await stop_all(stop_events, stop_stream, stop_connection)
 
         logger.debug("nova connection closed")
 
@@ -431,7 +426,8 @@ class BidiNovaSonicModel(BidiModel):
 
         # Handle text output (transcripts)
         elif "textOutput" in nova_event:
-            text_content = nova_event["textOutput"]["content"]
+            text_output = nova_event["textOutput"]
+            text_content = text_output["content"]
             # Check for Nova Sonic interruption pattern
             if '{ "interrupted" : true }' in text_content:
                 logger.debug("nova interruption detected in text output")
@@ -440,7 +436,7 @@ class BidiNovaSonicModel(BidiModel):
             return BidiTranscriptStreamEvent(
                 delta={"text": text_content},
                 text=text_content,
-                role="assistant",
+                role=text_output["role"].lower(),
                 is_final=self._generation_stage == "FINAL",
                 current_transcript=text_content,
             )
