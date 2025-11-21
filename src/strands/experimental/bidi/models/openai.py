@@ -16,7 +16,7 @@ from websockets import ClientConnection
 from ....types._events import ToolResultEvent, ToolUseStreamEvent
 from ....types.content import Messages
 from ....types.tools import ToolResult, ToolSpec, ToolUse
-from .._async import stop
+from .._async import stop_all
 from ..types.events import (
     BidiAudioInputEvent,
     BidiAudioStreamEvent,
@@ -126,7 +126,7 @@ class BidiOpenAIRealtimeModel(BidiModel):
             **kwargs: Additional configuration options.
         """
         if self._connection_id:
-            raise RuntimeError("call stop before starting again")
+            raise RuntimeError("model already started | call stop before starting again")
 
         logger.info("openai realtime connection starting")
 
@@ -264,7 +264,7 @@ class BidiOpenAIRealtimeModel(BidiModel):
     async def receive(self) -> AsyncIterable[BidiOutputEvent]:  # type: ignore
         """Receive OpenAI events and convert to Strands TypedEvent format."""
         if not self._connection_id:
-            raise RuntimeError("must call start")
+            raise RuntimeError("model not started | call start before receiving")
 
         yield BidiConnectionStartEvent(connection_id=self._connection_id, model=self.model)
 
@@ -539,7 +539,7 @@ class BidiOpenAIRealtimeModel(BidiModel):
             ValueError: If content type not supported (e.g., image content).
         """
         if not self._connection_id:
-            raise RuntimeError("must call start")
+            raise RuntimeError("model not started | call start before sending")
 
         # Note: TypedEvent inherits from dict, so isinstance checks for TypedEvent must come first
         if isinstance(content, BidiTextInputEvent):
@@ -602,7 +602,7 @@ class BidiOpenAIRealtimeModel(BidiModel):
         async def stop_connection() -> None:
             self._connection_id = None
 
-        await stop(stop_websocket, stop_connection)
+        await stop_all(stop_websocket, stop_connection)
 
         logger.debug("openai realtime connection closed")
 

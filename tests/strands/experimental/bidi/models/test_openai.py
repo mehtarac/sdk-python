@@ -275,7 +275,7 @@ async def test_send_edge_cases(mock_websockets_connect, model):
 
     # Test send when inactive
     text_input = BidiTextInputEvent(text="Hello", role="user")
-    with pytest.raises(RuntimeError, match=r"must call start"):
+    with pytest.raises(RuntimeError, match=r"call start before sending"):
         await model.send(text_input)
     mock_ws.send.assert_not_called()
 
