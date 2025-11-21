@@ -5,7 +5,7 @@ The agent loop handles the events received from the model and executes tools whe
 
 import asyncio
 import logging
-from typing import TYPE_CHECKING, Any, AsyncIterable, Awaitable
+from typing import TYPE_CHECKING, Any, AsyncGenerator, Coroutine
 
 from ....types._events import ToolInterruptEvent, ToolResultEvent, ToolResultMessageEvent, ToolUseStreamEvent
 from ....types.content import Message
@@ -123,7 +123,7 @@ class _BidiAgentLoop:
             # Emit after invocation event (reverse order for cleanup)
             await self._agent.hooks.invoke_callbacks_async(BidiAfterInvocationEvent(agent=self._agent))
 
-    async def receive(self) -> AsyncIterable[BidiOutputEvent]:
+    async def receive(self) -> AsyncGenerator[BidiOutputEvent, None]:
         """Receive model and tool call events."""
         while True:
             event = await self._event_queue.get()
@@ -137,12 +137,12 @@ class _BidiAgentLoop:
         """True if agent loop started, False otherwise."""
         return self._active
 
-    def _create_task(self, coro: Awaitable[None]) -> None:
+    def _create_task(self, coro: Coroutine[Any, Any, None]) -> None:
         """Utilitly to create async task.
 
         Adds a clean up callback to run after task completes.
         """
-        task: asyncio.Task[None] = asyncio.create_task(coro)  # type: ignore
+        task: asyncio.Task[None] = asyncio.create_task(coro)
         task.add_done_callback(lambda task: self._tasks.remove(task))
 
         self._tasks.add(task)
@@ -154,7 +154,7 @@ class _BidiAgentLoop:
         """
         logger.debug("model task starting")
 
-        async for event in self._agent.model.receive():  # type: ignore
+        async for event in self._agent.model.receive():
             await self._event_queue.put(event)
 
             if isinstance(event, BidiTranscriptStreamEvent):
