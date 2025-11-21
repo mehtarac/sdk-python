@@ -245,7 +245,7 @@ async def test_send_edge_cases(mock_genai_client, model):
 
     # Test send when inactive
     text_input = BidiTextInputEvent(text="Hello", role="user")
-    with pytest.raises(RuntimeError, match=r"must call start"):
+    with pytest.raises(RuntimeError, match=r"call start before sending"):
         await model.send(text_input)
     mock_live_session.send_client_content.assert_not_called()
 
@@ -253,7 +253,7 @@ async def test_send_edge_cases(mock_genai_client, model):
     await model.start()
     unknown_content = {"unknown_field": "value"}
     with pytest.raises(ValueError, match=r"content not supported"):
-        await model.send(unknown_content)  # Should not raise, just log warning
+        await model.send(unknown_content)
 
     await model.stop()
 

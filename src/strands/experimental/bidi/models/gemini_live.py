@@ -23,7 +23,7 @@ from google.genai.types import LiveConnectConfigOrDict, LiveServerMessage
 from ....types._events import ToolResultEvent, ToolUseStreamEvent
 from ....types.content import Messages
 from ....types.tools import ToolResult, ToolSpec, ToolUse
-from .._async import stop
+from .._async import stop_all
 from ..types.events import (
     BidiAudioInputEvent,
     BidiAudioStreamEvent,
@@ -117,7 +117,7 @@ class BidiGeminiLiveModel(BidiModel):
             **kwargs: Additional configuration options.
         """
         if self._connection_id:
-            raise RuntimeError("call stop before starting again")
+            raise RuntimeError("model already started | call stop before starting again")
 
         self._connection_id = str(uuid.uuid4())
 
@@ -161,7 +161,7 @@ class BidiGeminiLiveModel(BidiModel):
     async def receive(self) -> AsyncIterable[BidiOutputEvent]:  # type: ignore
         """Receive Gemini Live API events and convert to provider-agnostic format."""
         if not self._connection_id:
-            raise RuntimeError("must call start")
+            raise RuntimeError("model not started | call start before receiving")
 
         yield BidiConnectionStartEvent(connection_id=self._connection_id, model=self.model_id)
 
@@ -338,7 +338,7 @@ class BidiGeminiLiveModel(BidiModel):
             ValueError: If content type not supported (e.g., image content).
         """
         if not self._connection_id:
-            raise RuntimeError("must call start")
+            raise RuntimeError("model not started | call start before sending")
 
         if isinstance(content, BidiTextInputEvent):
             await self._send_text_content(content.text)
@@ -423,7 +423,7 @@ class BidiGeminiLiveModel(BidiModel):
         async def stop_connection() -> None:
             self._connection_id = None
 
-        await stop(stop_session, stop_connection)
+        await stop_all(stop_session, stop_connection)
 
     def _build_live_config(
         self, system_prompt: Optional[str] = None, tools: Optional[List[ToolSpec]] = None, **kwargs: Any
