@@ -141,9 +141,6 @@ class BidiAgent:
             for hook in hooks:
                 self.hooks.add_hook(hook)
 
-        # Initialize invocation state (will be set in start())
-        self._invocation_state: dict[str, Any] = {}
-
         self._loop = _BidiAgentLoop(self)
 
         # Emit initialization event
@@ -283,11 +280,10 @@ class BidiAgent:
             ```
         """
         if self._started:
-            raise RuntimeError("call stop before starting again")
+            raise RuntimeError("agent already started | call stop before starting again")
 
         logger.debug("agent starting")
-        self._invocation_state = invocation_state or {}
-        await self._loop.start()
+        await self._loop.start(invocation_state)
         self._started = True
 
     async def send(self, input_data: BidiAgentInput) -> None:
@@ -314,7 +310,7 @@ class BidiAgent:
             await agent.send({"type": "bidirectional_text_input", "text": "Hello", "role": "user"})
         """
         if not self._started:
-            raise RuntimeError("must call start")
+            raise RuntimeError("agent not started | call start before sending")
 
         # Handle string input
         if isinstance(input_data, str):
@@ -375,7 +371,7 @@ class BidiAgent:
             RuntimeError: If start has not been called.
         """
         if not self._started:
-            raise RuntimeError("must call start")
+            raise RuntimeError("agent not started | call start before receiving")
 
         async for event in self._loop.receive():
             yield event
@@ -389,16 +385,21 @@ class BidiAgent:
         self._started = False
         await self._loop.stop()
 
-    async def __aenter__(self) -> "BidiAgent":
+    async def __aenter__(self, invocation_state: dict[str, Any] | None = None) -> "BidiAgent":
         """Async context manager entry point.
 
         Automatically starts the bidirectional connection when entering the context.
+
+        Args:
+            invocation_state: Optional context to pass to tools during execution.
+                This allows passing custom data (user_id, session_id, database connections, etc.)
+                that tools can access via their invocation_state parameter.
 
         Returns:
             Self for use in the context.
         """
         logger.debug("context_manager=<enter> | starting connection")
-        await self.start()
+        await self.start(invocation_state)
         return self
 
     async def __aexit__(self, *_: Any) -> None:
