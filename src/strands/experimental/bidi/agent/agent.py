@@ -398,7 +398,7 @@ class BidiAgent:
         Returns:
             Self for use in the context.
         """
-        logger.debug("context_manager=<enter> | starting connection")
+        logger.debug("context_manager=<enter> | starting agent")
         await self.start(invocation_state)
         return self
 
@@ -408,7 +408,7 @@ class BidiAgent:
         Automatically ends the connection and cleans up resources including
         when exiting the context, regardless of whether an exception occurred.
         """
-        logger.debug("context_manager=<exit> | cleaning up adapters and connection")
+        logger.debug("context_manager=<exit> | stopping agent")
         await self.stop()
 
     async def run(
