@@ -299,7 +299,7 @@ format-check = "format-fix --check"
 format-fix = "ruff format {args} --target-version py312 ./src/strands/experimental/bidi/**/*.py"
 quality-check = "ruff check {args} --target-version py312 ./src/strands/experimental/bidi/**/*.py"
 quality-fix = "quality-check --fix"
-type-check = "mypy {args} --python-version 3.12 --exclude 'src/strands/experimental/bidi/scripts' ./src/strands/experimental/bidi/**/*.py"
+type-check = "mypy {args} --python-version 3.12 ./src/strands/experimental/bidi/**/*.py"
 
 [tool.hatch.envs.bidi-test]
 template = "bidi"

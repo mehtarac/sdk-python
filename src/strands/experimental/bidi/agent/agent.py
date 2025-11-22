@@ -459,7 +459,7 @@ class BidiAgent:
             for start in [*start_inputs, *start_outputs]:
                 await start()
 
-            async with asyncio.TaskGroup() as task_group:  # type: ignore
+            async with asyncio.TaskGroup() as task_group:
                 task_group.create_task(run_inputs())
                 task_group.create_task(run_outputs())
 
