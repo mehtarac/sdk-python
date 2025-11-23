@@ -5,7 +5,7 @@ The agent loop handles the events received from the model and executes tools whe
 
 import asyncio
 import logging
-from typing import TYPE_CHECKING, Any, AsyncGenerator, Coroutine
+from typing import TYPE_CHECKING, Any, AsyncGenerator
 
 from ....types._events import ToolInterruptEvent, ToolResultEvent, ToolResultMessageEvent, ToolUseStreamEvent
 from ....types.content import Message

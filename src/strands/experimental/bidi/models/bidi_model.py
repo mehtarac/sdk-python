@@ -13,7 +13,7 @@ Features:
 """
 
 import logging
-from typing import Any, AsyncIterable, Awaitable, Protocol
+from typing import Any, AsyncIterable, Protocol
 
 from ....types._events import ToolResultEvent
 from ....types.content import Messages
@@ -34,13 +34,13 @@ class BidiModel(Protocol):
     provider-specific protocols while exposing a standardized event-based API.
     """
 
-    def start(
+    async def start(
         self,
         system_prompt: str | None = None,
         tools: list[ToolSpec] | None = None,
         messages: Messages | None = None,
         **kwargs: Any,
-    ) -> Awaitable[None]:
+    ) -> None:
         """Establish a persistent streaming connection with the model.
 
         Opens a bidirectional connection that remains active for real-time communication.
@@ -55,7 +55,7 @@ class BidiModel(Protocol):
         """
         ...
 
-    def stop(self) -> Awaitable[None]:
+    async def stop(self) -> None:
         """Close the streaming connection and release resources.
 
         Terminates the active bidirectional connection and cleans up any associated
@@ -79,10 +79,10 @@ class BidiModel(Protocol):
         """
         ...
 
-    def send(
+    async def send(
         self,
         content: BidiInputEvent | ToolResultEvent,
-    ) -> Awaitable[None]:
+    ) -> None:
         """Send content to the model over the active connection.
 
         Transmits user input or tool results to the model during an active streaming
