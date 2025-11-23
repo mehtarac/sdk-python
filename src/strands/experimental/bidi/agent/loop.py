@@ -162,7 +162,6 @@ class _BidiAgentLoop:
 
         except Exception as error:
             await self._event_queue.put(error)
-            raise
 
     async def _run_tool(self, tool_use: ToolUse) -> None:
         """Task for running tool requested by the model using the tool executor."""
@@ -209,4 +208,3 @@ class _BidiAgentLoop:
 
         except Exception as error:
             await self._event_queue.put(error)
-            raise
