@@ -25,6 +25,8 @@ from aws_sdk_bedrock_runtime.config import Config, HTTPAuthSchemeResolver, SigV4
 from aws_sdk_bedrock_runtime.models import (
     BidirectionalInputPayloadPart,
     InvokeModelWithBidirectionalStreamInputChunk,
+    ModelTimeoutException,
+    ValidationException,
 )
 from smithy_aws_core.identity.static import StaticCredentialsResolver
 from smithy_core.aio.eventstream import DuplexEventStream
@@ -49,7 +51,7 @@ from ..types.events import (
     BidiUsageEvent,
     SampleRate,
 )
-from .bidi_model import BidiModel
+from .bidi_model import BidiModel, BidiModelTimeoutError
 
 logger = logging.getLogger(__name__)
 
@@ -271,7 +273,18 @@ class BidiNovaSonicModel(BidiModel):
 
         _, output = await self._stream.await_output()
         while True:
-            event_data = await output.receive()
+            try:
+                event_data = await output.receive()
+
+            except ValidationException as error:
+                if "InternalErrorCode=531" in str(error):
+                    # nova also times out if user is silent for 175 seconds
+                    raise BidiModelTimeoutError(error) from error
+                raise
+
+            except ModelTimeoutException as error:
+                raise BidiModelTimeoutError(error) from error
+
             if not event_data:
                 continue
 
@@ -393,18 +406,19 @@ class BidiNovaSonicModel(BidiModel):
 
         # Validate content types and preserve structure
         content = tool_result.get("content", [])
-        
+
         # Validate all content types are supported
         for block in content:
             if "text" not in block and "json" not in block:
                 # Unsupported content type - raise error
                 raise ValueError(
-                    f"tool_use_id=<{tool_use_id}>, content_types=<{list(block.keys())}> | Content type not supported by Nova Sonic"
+                    f"tool_use_id=<{tool_use_id}>, content_types=<{list(block.keys())}>"
+                    " | Content type not supported by Nova Sonic"
                 )
-        
+
         # Optimize for single content item - unwrap the array
         if len(content) == 1:
-            result_data: dict[str, Any] = content[0]
+            result_data = cast(dict[str, Any], content[0])
         else:
             # Multiple items - send as array
             result_data = {"content": content}

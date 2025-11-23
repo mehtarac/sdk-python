@@ -32,7 +32,6 @@ from ..types.events import (
     BidiUsageEvent,
     ModalityUsage,
     Role,
-    SampleRate,
     StopReason,
 )
 from .bidi_model import BidiModel
@@ -347,7 +346,7 @@ class BidiOpenAIRealtimeModel(BidiModel):
                     # Tool result - create as function_call_output item
                     tool_result = block["toolResult"]
                     original_id = tool_result["toolUseId"]
-                    
+
                     # Validate content types and serialize, preserving structure
                     result_output = ""
                     if "content" in tool_result:
@@ -356,12 +355,13 @@ class BidiOpenAIRealtimeModel(BidiModel):
                             if "text" not in result_block and "json" not in result_block:
                                 # Unsupported content type - raise error
                                 raise ValueError(
-                                    f"tool_use_id=<{original_id}>, content_types=<{list(result_block.keys())}> | Content type not supported by OpenAI Realtime API"
+                                    f"tool_use_id=<{original_id}>, content_types=<{list(result_block.keys())}>"
+                                    " | Content type not supported by OpenAI Realtime API"
                                 )
-                        
+
                         # Preserve structure by JSON-dumping the entire content array
                         result_output = json.dumps(tool_result["content"])
-                    
+
                     # Use mapped call_id if available, otherwise skip orphaned result
                     if original_id not in call_id_map:
                         continue  # Skip this tool result since we don't have the call
@@ -429,7 +429,7 @@ class BidiOpenAIRealtimeModel(BidiModel):
                 BidiAudioStreamEvent(
                     audio=openai_event["delta"],
                     format="pcm",
-                    sample_rate=cast(SampleRate, AUDIO_FORMAT["rate"]),
+                    sample_rate=sample_rate,
                     channels=channels,
                 )
             ]
@@ -723,9 +723,10 @@ class BidiOpenAIRealtimeModel(BidiModel):
                 if "text" not in block and "json" not in block:
                     # Unsupported content type - raise error
                     raise ValueError(
-                        f"tool_use_id=<{tool_use_id}>, content_types=<{list(block.keys())}> | Content type not supported by OpenAI Realtime API"
+                        f"tool_use_id=<{tool_use_id}>, content_types=<{list(block.keys())}>"
+                        " | Content type not supported by OpenAI Realtime API"
                     )
-            
+
             # Preserve structure by JSON-dumping the entire content array
             result_output = json.dumps(tool_result["content"])
 
