@@ -3,43 +3,86 @@ import base64
 import unittest.mock
 
 import pytest
+import pytest_asyncio
 
-from strands.experimental.bidi.io import BidiAudioIO
-from strands.experimental.bidi.types.events import BidiAudioInputEvent, BidiAudioStreamEvent
+from strands.experimental.bidi.io.audio import BidiAudioIO, _BidiAudioBuffer
+from strands.experimental.bidi.types.events import BidiAudioInputEvent, BidiAudioStreamEvent, BidiInterruptionEvent
+
+
+@pytest.fixture
+def audio_buffer():
+    buffer = _BidiAudioBuffer(size=1)
+    buffer.start()
+    yield buffer
+    buffer.stop()
 
 
 @pytest.fixture
 def py_audio():
-    with unittest.mock.patch("strands.experimental.bidi.io.audio.pyaudio") as mock:
-        yield mock.PyAudio()
-
+    with unittest.mock.patch("strands.experimental.bidi.io.audio.pyaudio.PyAudio") as mock:
+        yield mock.return_value
 
 @pytest.fixture
-def audio_io():
+def audio_io(py_audio):
+    _ = py_audio
     return BidiAudioIO()
 
 
-@pytest.fixture
-def audio_input(audio_io):
-    return audio_io.input()
+@pytest_asyncio.fixture
+async def audio_input(audio_io):
+    input_ = audio_io.input()
+    await input_.start()
+    yield input_
+    await input_.stop()
 
 
-@pytest.fixture
-def audio_output(audio_io):
-    return audio_io.output()
+@pytest_asyncio.fixture
+async def audio_output(audio_io):
+    output = audio_io.output()
+    await output.start()
+    yield output
+    await output.stop()
+
+
+def test_bidi_audio_buffer_put(audio_buffer):
+    audio_buffer.put(b"test-chunk")
+
+    tru_chunk = audio_buffer.get()
+    exp_chunk = b"test-chunk"
+    assert tru_chunk == exp_chunk
+
+
+def test_bidi_audio_buffer_put_full(audio_buffer):
+    audio_buffer.put(b"test-chunk-1")
+    audio_buffer.put(b"test-chunk-2")
+
+    tru_chunk = audio_buffer.get()
+    exp_chunk = b"test-chunk-2"
+    assert tru_chunk == exp_chunk
+
+
+def test_bidi_audio_buffer_get_padding(audio_buffer):
+    audio_buffer.put(b"test-chunk")
+
+    tru_chunk = audio_buffer.get(11)
+    exp_chunk = b"test-chunk\x00"
+    assert tru_chunk == exp_chunk
+
+
+def test_bidi_audio_buffer_clear(audio_buffer):
+    audio_buffer.put(b"test-chunk")
+    audio_buffer.clear()
+
+    tru_byte = audio_buffer.get(1)
+    exp_byte = b"\x00"
+    assert tru_byte == exp_byte
 
 
 @pytest.mark.asyncio
-async def test_bidi_audio_io_input(py_audio, audio_input):
-    microphone = unittest.mock.Mock()
-    microphone.read.return_value = b"test-audio"
+async def test_bidi_audio_io_input(audio_input):
+    audio_input._callback(b"test-audio")
 
-    py_audio.open.return_value = microphone
-
-    await audio_input.start()
     tru_event = await audio_input()
-    await audio_input.stop()
-
     exp_event = BidiAudioInputEvent(
         audio=base64.b64encode(b"test-audio").decode("utf-8"),
         channels=1,
@@ -48,25 +91,9 @@ async def test_bidi_audio_io_input(py_audio, audio_input):
     )
     assert tru_event == exp_event
 
-    microphone.read.assert_called_once_with(512, exception_on_overflow=False)
-
 
 @pytest.mark.asyncio
-async def test_bidi_audio_io_output(py_audio, audio_output):
-    write_future = asyncio.Future()
-    write_event = asyncio.Event()
-
-    def write(data):
-        write_future.set_result(data)
-        write_event.set()
-
-    speaker = unittest.mock.Mock()
-    speaker.write.side_effect = write
-
-    py_audio.open.return_value = speaker
-
-    await audio_output.start()
-
+async def test_bidi_audio_io_output(audio_output):
     audio_event = BidiAudioStreamEvent(
         audio=base64.b64encode(b"test-audio").decode("utf-8"),
         channels=1,
@@ -74,8 +101,24 @@ async def test_bidi_audio_io_output(py_audio, audio_output):
         sample_rate=1600,
     )
     await audio_output(audio_event)
-    await write_event.wait()
 
-    await audio_output.stop()
+    tru_data, _ = audio_output._callback(None, frame_count=4)
+    exp_data = b"test-aud"
+    assert tru_data == exp_data
 
-    speaker.write.assert_called_once_with(write_future.result())
+
+@pytest.mark.asyncio
+async def test_bidi_audio_io_output_interrupt(audio_output):
+    audio_event = BidiAudioStreamEvent(
+        audio=base64.b64encode(b"test-audio").decode("utf-8"),
+        channels=1,
+        format="pcm",
+        sample_rate=1600,
+    )
+    await audio_output(audio_event)
+    interrupt_event = BidiInterruptionEvent(reason="user_speech")
+    await audio_output(interrupt_event)
+
+    tru_data, _ = audio_output._callback(None, frame_count=1)
+    exp_data = b"\x00\x00"
+    assert tru_data == exp_data

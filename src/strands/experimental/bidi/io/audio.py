@@ -7,7 +7,7 @@ the output buffer is cleared to stop playback.
 import asyncio
 import base64
 import logging
-from collections import deque
+import queue
 from typing import Any
 
 import pyaudio
@@ -18,17 +18,99 @@ from ..types.io import BidiInput, BidiOutput
 logger = logging.getLogger(__name__)
 
 
+class _BidiAudioBuffer:
+    """Buffer chunks of audio data between agent and PyAudio."""
+
+    _buffer: queue.Queue
+    _data: bytearray
+
+    def __init__(self, size: int | None = None):
+        """Initialize buffer settings.
+
+        Args:
+            size: Size of the buffer (default: unbounded).
+        """
+        self._size = size or 0
+
+    def start(self) -> None:
+        """Setup buffer."""
+        self._buffer = queue.Queue(self._size)
+        self._data = bytearray()
+
+    def stop(self) -> None:
+        """Tear down buffer."""
+        if hasattr(self, "_data"):
+            self._data.clear()
+        if hasattr(self, "_buffer"):
+            # simlulated shutdown (only available in 3.13+)
+            # unblocks waited get calls
+            self._buffer.put_nowait(b"")
+            self._buffer = queue.Queue(self._size)
+
+    def put(self, chunk: bytes) -> None:
+        """Put data chunk into buffer.
+
+        If full, removes the oldest chunk.
+        """
+        if self._buffer.full():
+            try:
+                self._buffer.get_nowait()
+            except queue.Empty:
+                pass
+
+        self._buffer.put_nowait(chunk)
+
+    def get(self, byte_count: int | None = None) -> bytes:
+        """Get the number of bytes specified from the buffer.
+
+        Args:
+            byte_count: Number of bytes to get from buffer.
+                - If the number of bytes specified is not available, the return is padded with silence.
+                - If the number of bytes is not specified, get the first chunk put in the buffer.
+
+        Returns:
+            Specified number of bytes.
+        """
+        if not byte_count:
+            self._data.extend(self._buffer.get())
+            byte_count = len(self._data)
+
+        while len(self._data) < byte_count:
+            try:
+                self._data.extend(self._buffer.get_nowait())
+            except queue.Empty:
+                break
+
+        silence = b"\x00" * max(byte_count - len(self._data), 0)
+        self._data.extend(silence)
+
+        data = self._data[:byte_count]
+        del self._data[:byte_count]
+
+        return bytes(data)
+
+    def clear(self) -> None:
+        """Clear the buffer."""
+        while True:
+            try:
+                self._buffer.get_nowait()
+            except queue.Empty:
+                break
+
+
 class _BidiAudioInput(BidiInput):
     """Handle audio input from user.
 
     Attributes:
         _audio: PyAudio instance for audio system access.
         _stream: Audio input stream.
+        _buffer: Buffer for sharing audio data between agent and PyAudio.
     """
 
     _audio: pyaudio.PyAudio
     _stream: pyaudio.Stream
 
+    _BUFFER_SIZE: int | None = None
     _CHANNELS: int = 1
     _DEVICE_INDEX: int | None = None
     _ENCODING: str = "pcm"
@@ -38,20 +120,20 @@ class _BidiAudioInput(BidiInput):
 
     def __init__(self, config: dict[str, Any]) -> None:
         """Extract configs."""
+        self._buffer_size = config.get("input_buffer_size", _BidiAudioInput._BUFFER_SIZE)
         self._channels = config.get("input_channels", _BidiAudioInput._CHANNELS)
         self._device_index = config.get("input_device_index", _BidiAudioInput._DEVICE_INDEX)
         self._format = config.get("input_format", _BidiAudioInput._FORMAT)
         self._frames_per_buffer = config.get("input_frames_per_buffer", _BidiAudioInput._FRAMES_PER_BUFFER)
         self._rate = config.get("input_rate", _BidiAudioInput._RATE)
 
+        self._buffer = _BidiAudioBuffer(self._buffer_size)
+
     async def start(self) -> None:
         """Start input stream."""
-        logger.debug(
-            "rate=<%d>, channels=<%d>, device_index=<%s> | starting audio input stream",
-            self._rate,
-            self._channels,
-            self._device_index,
-        )
+        logger.debug("starting audio input stream")
+
+        self._buffer.start()
         self._audio = pyaudio.PyAudio()
         self._stream = self._audio.open(
             channels=self._channels,
@@ -60,31 +142,39 @@ class _BidiAudioInput(BidiInput):
             input=True,
             input_device_index=self._device_index,
             rate=self._rate,
+            stream_callback=self._callback,
         )
-        logger.info("rate=<%d>, channels=<%d> | audio input stream started", self._rate, self._channels)
+
+        logger.debug("audio input stream started")
 
     async def stop(self) -> None:
         """Stop input stream."""
         logger.debug("stopping audio input stream")
-        # TODO: Provide time for streaming thread to exit cleanly to prevent conflicts with the Nova threads.
-        #       See if we can remove after properly handling cancellation for agent.
-        await asyncio.sleep(0.1)
 
-        self._stream.close()
-        self._audio.terminate()
+        if hasattr(self, "_stream"):
+            self._stream.close()
+        if hasattr(self, "_audio"):
+            self._audio.terminate()
+        if hasattr(self, "_buffer"):
+            self._buffer.stop()
 
         logger.debug("audio input stream stopped")
 
     async def __call__(self) -> BidiAudioInputEvent:
         """Read audio from input stream."""
-        audio_bytes = await asyncio.to_thread(self._stream.read, self._frames_per_buffer, exception_on_overflow=False)
+        data = await asyncio.to_thread(self._buffer.get)
 
         return BidiAudioInputEvent(
-            audio=base64.b64encode(audio_bytes).decode("utf-8"),
+            audio=base64.b64encode(data).decode("utf-8"),
             channels=self._channels,
             format=_BidiAudioInput._ENCODING,
             sample_rate=self._rate,
         )
+
+    def _callback(self, in_data: bytes, *_: Any) -> tuple[None, Any]:
+        """Callback to receive audio data from PyAudio."""
+        self._buffer.put(in_data)
+        return (None, pyaudio.paContinue)
 
 
 class _BidiAudioOutput(BidiOutput):
@@ -93,16 +183,11 @@ class _BidiAudioOutput(BidiOutput):
     Attributes:
         _audio: PyAudio instance for audio system access.
         _stream: Audio output stream.
-        _buffer: Deque buffer for queuing audio data.
-        _buffer_event: Event to signal when buffer has data.
-        _output_task: Background task for processing audio output.
+        _buffer: Buffer for sharing audio data between agent and PyAudio.
     """
 
     _audio: pyaudio.PyAudio
     _stream: pyaudio.Stream
-    _buffer: deque
-    _buffer_event: asyncio.Event
-    _output_task: asyncio.Task
 
     _BUFFER_SIZE: int | None = None
     _CHANNELS: int = 1
@@ -120,15 +205,13 @@ class _BidiAudioOutput(BidiOutput):
         self._frames_per_buffer = config.get("output_frames_per_buffer", _BidiAudioOutput._FRAMES_PER_BUFFER)
         self._rate = config.get("output_rate", _BidiAudioOutput._RATE)
 
+        self._buffer = _BidiAudioBuffer(self._buffer_size)
+
     async def start(self) -> None:
         """Start output stream."""
-        logger.debug(
-            "rate=<%d>, channels=<%d>, device_index=<%s>, buffer_size=<%s> | starting audio output stream",
-            self._rate,
-            self._channels,
-            self._device_index,
-            self._buffer_size,
-        )
+        logger.debug("starting audio output stream")
+
+        self._buffer.start()
         self._audio = pyaudio.PyAudio()
         self._stream = self._audio.open(
             channels=self._channels,
@@ -137,49 +220,40 @@ class _BidiAudioOutput(BidiOutput):
             output=True,
             output_device_index=self._device_index,
             rate=self._rate,
+            stream_callback=self._callback,
         )
-        self._buffer = deque(maxlen=self._buffer_size)
-        self._buffer_event = asyncio.Event()
-        self._output_task = asyncio.create_task(self._output())
-        logger.info("rate=<%d>, channels=<%d> | audio output stream started", self._rate, self._channels)
+
+        logger.debug("audio output stream started")
 
     async def stop(self) -> None:
         """Stop output stream."""
         logger.debug("stopping audio output stream")
-        self._buffer.clear()
-        self._buffer.append(None)
-        self._buffer_event.set()
-        await self._output_task
 
-        self._stream.close()
-        self._audio.terminate()
+        if hasattr(self, "_stream"):
+            self._stream.close()
+        if hasattr(self, "_audio"):
+            self._audio.terminate()
+        if hasattr(self, "_buffer"):
+            self._buffer.stop()
 
         logger.debug("audio output stream stopped")
 
     async def __call__(self, event: BidiOutputEvent) -> None:
-        """Handle audio events with direct stream writing."""
+        """Send audio to output stream."""
         if isinstance(event, BidiAudioStreamEvent):
-            audio_bytes = base64.b64decode(event["audio"])
-            self._buffer.append(audio_bytes)
-            self._buffer_event.set()
-            logger.debug("audio_bytes=<%d> | audio chunk buffered for playback", len(audio_bytes))
+            data = base64.b64decode(event["audio"])
+            self._buffer.put(data)
+            logger.debug("audio_bytes=<%d> | audio chunk buffered for playback", len(data))
 
         elif isinstance(event, BidiInterruptionEvent):
             logger.debug("reason=<%s> | clearing audio buffer due to interruption", event["reason"])
             self._buffer.clear()
-            self._buffer_event.clear()
 
-    async def _output(self) -> None:
-        while True:
-            await self._buffer_event.wait()
-            self._buffer_event.clear()
-
-            while self._buffer:
-                audio_bytes = self._buffer.popleft()
-                if not audio_bytes:
-                    return
-
-                await asyncio.to_thread(self._stream.write, audio_bytes)
+    def _callback(self, _in_data: None, frame_count: int, *_: Any) -> tuple[bytes, Any]:
+        """Callback to send audio data to PyAudio."""
+        byte_count = frame_count * pyaudio.get_sample_size(self._format)
+        data = self._buffer.get(byte_count)
+        return (data, pyaudio.paContinue)
 
 
 class BidiAudioIO:
@@ -190,6 +264,7 @@ class BidiAudioIO:
 
         Args:
             **config: Dictionary containing audio configuration:
+                - input_buffer_size (int): Maximum input buffer size (default: None)
                 - input_channels (int): Input channels (default: 1)
                 - input_device_index (int): Specific input device (optional)
                 - input_format (int): Audio format (default: paInt16)
