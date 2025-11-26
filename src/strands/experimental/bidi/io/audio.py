@@ -47,8 +47,9 @@ class _BidiAudioBuffer:
         if hasattr(self, "_data"):
             self._data.clear()
         if hasattr(self, "_buffer"):
-            # simlulated shutdown (only available in 3.13+)
-            # unblocks waited get calls
+            # Unblocking waited get calls by putting an empty chunk
+            # Note, Queue.shutdown exists but is a 3.13+ only feature
+            # We simulate shutdown with the below logic
             self._buffer.put_nowait(b"")
             self._buffer = queue.Queue(self._size)
 
@@ -58,9 +59,11 @@ class _BidiAudioBuffer:
         If full, removes the oldest chunk.
         """
         if self._buffer.full():
+            logger.debug("buffer is full | removing oldest chunk")
             try:
                 self._buffer.get_nowait()
             except queue.Empty:
+                logger.debug("buffer already empty")
                 pass
 
         self._buffer.put_nowait(chunk)
@@ -86,8 +89,8 @@ class _BidiAudioBuffer:
             except queue.Empty:
                 break
 
-        silence = b"\x00" * max(byte_count - len(self._data), 0)
-        self._data.extend(silence)
+        padding_bytes = b"\x00" * max(byte_count - len(self._data), 0)
+        self._data.extend(padding_bytes)
 
         data = self._data[:byte_count]
         del self._data[:byte_count]
