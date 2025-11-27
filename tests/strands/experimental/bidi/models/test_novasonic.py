@@ -527,7 +527,7 @@ async def test_message_history_empty_and_edge_cases(nova_model):
 
 
 @pytest.mark.asyncio
-async def test_receive_timeout(nova_model, mock_stream):
+async def test_bidi_nova_sonic_model_receive_timeout(nova_model, mock_stream):
     mock_output = AsyncMock()
     mock_output.receive.side_effect = ModelTimeoutException("Connection timeout")
     mock_stream.await_output.return_value = (None, mock_output)
@@ -540,7 +540,7 @@ async def test_receive_timeout(nova_model, mock_stream):
 
 
 @pytest.mark.asyncio
-async def test_receive_timeout_validation(nova_model, mock_stream):
+async def test_bidi_nova_sonic_model_receive_timeout_validation(nova_model, mock_stream):
     mock_output = AsyncMock()
     mock_output.receive.side_effect = ValidationException("InternalErrorCode=531: Request timeout")
     mock_stream.await_output.return_value = (None, mock_output)
