@@ -22,7 +22,7 @@ async def loop(agent):
 
 
 @pytest.mark.asyncio
-async def test_receive_restart(loop, agent, agenerator):
+async def test_bidi_agent_loop_receive_restart(loop, agent, agenerator):
     timeout_error = BidiModelTimeoutError("test timeout")
     text_event = BidiTextInputEvent(text="test after restart")
 
