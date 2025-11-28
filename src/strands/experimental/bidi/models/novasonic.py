@@ -38,6 +38,8 @@ from ....types.tools import ToolResult, ToolSpec, ToolUse
 from .._async import stop_all
 from ..types.bidi_model import AudioConfig
 from ..types.events import (
+    AudioChannel,
+    AudioSampleRate,
     BidiAudioInputEvent,
     BidiAudioStreamEvent,
     BidiConnectionStartEvent,
@@ -49,7 +51,6 @@ from ..types.events import (
     BidiTextInputEvent,
     BidiTranscriptStreamEvent,
     BidiUsageEvent,
-    SampleRate,
 )
 from .bidi_model import BidiModel, BidiModelTimeoutError
 
@@ -141,9 +142,9 @@ class BidiNovaSonicModel(BidiModel):
 
         # Define default audio configuration
         default_audio_config: AudioConfig = {
-            "input_rate": cast(int, NOVA_AUDIO_INPUT_CONFIG["sampleRateHertz"]),
-            "output_rate": cast(int, NOVA_AUDIO_OUTPUT_CONFIG["sampleRateHertz"]),
-            "channels": cast(int, NOVA_AUDIO_INPUT_CONFIG["channelCount"]),
+            "input_rate": cast(AudioSampleRate, NOVA_AUDIO_INPUT_CONFIG["sampleRateHertz"]),
+            "output_rate": cast(AudioSampleRate, NOVA_AUDIO_OUTPUT_CONFIG["sampleRateHertz"]),
+            "channels": cast(AudioChannel, NOVA_AUDIO_INPUT_CONFIG["channelCount"]),
             "format": "pcm",
             "voice": cast(str, NOVA_AUDIO_OUTPUT_CONFIG["voiceId"]),
         }
@@ -489,7 +490,7 @@ class BidiNovaSonicModel(BidiModel):
             return BidiAudioStreamEvent(
                 audio=audio_content,
                 format="pcm",
-                sample_rate=cast(SampleRate, NOVA_AUDIO_OUTPUT_CONFIG["sampleRateHertz"]),
+                sample_rate=cast(AudioSampleRate, NOVA_AUDIO_OUTPUT_CONFIG["sampleRateHertz"]),
                 channels=channels,
             )
 
