@@ -158,7 +158,7 @@ class _BidiAgentLoop:
             if isinstance(event, BidiModelTimeoutError):
                 logger.debug("model timeout error received")
                 yield BidiConnectionRestartEvent(event)
-                await self._restart(event)
+                await self._restart_connection(event)
                 continue
 
             if isinstance(event, Exception):
@@ -166,7 +166,7 @@ class _BidiAgentLoop:
 
             yield event
 
-    async def _restart(self, timeout_error: BidiModelTimeoutError) -> None:
+    async def _restart_connection(self, timeout_error: BidiModelTimeoutError) -> None:
         """Restart the model connection after timeout.
 
         Args:
