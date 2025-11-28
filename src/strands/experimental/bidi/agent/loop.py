@@ -48,7 +48,7 @@ class _BidiAgentLoop:
         _invocation_state: Optional context to pass to tools during execution.
             This allows passing custom data (user_id, session_id, database connections, etc.)
             that tools can access via their invocation_state parameter.
-        _send_signal: Signal that the loop is ready to send events to the model.
+        _send_gate: Gate the sending of events to the model.
             Blocks when agent is reseting the model connection after timeout.
     """
 
@@ -66,7 +66,7 @@ class _BidiAgentLoop:
         self._event_queue: asyncio.Queue
         self._invocation_state: dict[str, Any]
 
-        self._send_signal = asyncio.Event()
+        self._send_gate = asyncio.Event()
 
     async def start(self, invocation_state: dict[str, Any] | None = None) -> None:
         """Start the agent loop.
@@ -100,7 +100,7 @@ class _BidiAgentLoop:
         self._task_pool.create(self._run_model())
 
         self._invocation_state = invocation_state or {}
-        self._send_signal.set()
+        self._send_gate.set()
         self._started = True
 
     async def stop(self) -> None:
@@ -108,7 +108,7 @@ class _BidiAgentLoop:
         logger.debug("agent loop stopping")
 
         self._started = False
-        self._send_signal.clear()
+        self._send_gate.clear()
         self._invocation_state = {}
 
         async def stop_tasks() -> None:
@@ -133,9 +133,9 @@ class _BidiAgentLoop:
         if not self._started:
             raise RuntimeError("loop not started | call start before sending")
 
-        if not self._send_signal.is_set():
+        if not self._send_gate.is_set():
             logger.debug("waiting for model send signal")
-            await self._send_signal.wait()
+            await self._send_gate.wait()
 
         if isinstance(event, BidiTextInputEvent):
             message: Message = {"role": "user", "content": [{"text": event.text}]}
@@ -174,7 +174,7 @@ class _BidiAgentLoop:
         """
         logger.debug("reseting model connection")
 
-        self._send_signal.clear()
+        self._send_gate.clear()
 
         await self._agent.hooks.invoke_callbacks_async(BidiBeforeConnectionRestartEvent(self._agent, timeout_error))
 
@@ -194,7 +194,7 @@ class _BidiAgentLoop:
                 BidiAfterConnectionRestartEvent(self._agent, restart_exception)
             )
 
-        self._send_signal.set()
+        self._send_gate.set()
 
     async def _run_model(self) -> None:
         """Task for running the model.
