@@ -534,7 +534,7 @@ async def test_bidi_nova_sonic_model_receive_timeout(nova_model, mock_stream):
     
     await nova_model.start()
     
-    with pytest.raises(BidiModelTimeoutError):
+    with pytest.raises(BidiModelTimeoutError, match=r"Connection timeout"):
         async for _ in nova_model.receive():
             pass
 
@@ -547,7 +547,7 @@ async def test_bidi_nova_sonic_model_receive_timeout_validation(nova_model, mock
     
     await nova_model.start()
     
-    with pytest.raises(BidiModelTimeoutError):
+    with pytest.raises(BidiModelTimeoutError, match=r"InternalErrorCode=531: Request timeout"):
         async for _ in nova_model.receive():
             pass
 
