@@ -288,6 +288,8 @@ async def test_event_conversion(mock_genai_client, model):
     # Test text output (converted to transcript via model_turn.parts)
     mock_text = unittest.mock.Mock()
     mock_text.data = None
+    mock_text.go_away = None
+    mock_text.session_resumption_update = None
     mock_text.tool_call = None
 
     # Create proper server_content structure with model_turn
@@ -319,6 +321,8 @@ async def test_event_conversion(mock_genai_client, model):
     # Test multiple text parts (should concatenate)
     mock_multi_text = unittest.mock.Mock()
     mock_multi_text.data = None
+    mock_multi_text.go_away = None
+    mock_multi_text.session_resumption_update = None
     mock_multi_text.tool_call = None
 
     mock_server_content_multi = unittest.mock.Mock()
@@ -347,6 +351,8 @@ async def test_event_conversion(mock_genai_client, model):
     mock_audio = unittest.mock.Mock()
     mock_audio.text = None
     mock_audio.data = b"audio_data"
+    mock_audio.go_away = None
+    mock_audio.session_resumption_update = None
     mock_audio.tool_call = None
     mock_audio.server_content = None
 
@@ -373,6 +379,8 @@ async def test_event_conversion(mock_genai_client, model):
     mock_tool = unittest.mock.Mock()
     mock_tool.text = None
     mock_tool.data = None
+    mock_tool.go_away = None
+    mock_tool.session_resumption_update = None
     mock_tool.tool_call = mock_tool_call
     mock_tool.server_content = None
 
@@ -404,6 +412,8 @@ async def test_event_conversion(mock_genai_client, model):
     mock_tool_multi = unittest.mock.Mock()
     mock_tool_multi.text = None
     mock_tool_multi.data = None
+    mock_tool_multi.go_away = None
+    mock_tool_multi.session_resumption_update = None
     mock_tool_multi.tool_call = mock_tool_call_multi
     mock_tool_multi.server_content = None
 
@@ -431,6 +441,8 @@ async def test_event_conversion(mock_genai_client, model):
     mock_interrupt = unittest.mock.Mock()
     mock_interrupt.text = None
     mock_interrupt.data = None
+    mock_interrupt.go_away = None
+    mock_interrupt.session_resumption_update = None
     mock_interrupt.tool_call = None
     mock_interrupt.server_content = mock_server_content
 
